@@ -1,0 +1,25 @@
+{
+  "manifest_version": 3,
+  "name": "Shopee Ads Reader",
+  "version": "0.4.1",
+  "description": "อ่านข้อมูลโฆษณาจากหน้า Shopee Ads ที่เปิดอยู่ แล้วบันทึกเป็นไฟล์ CSV เพื่อเทียบกับยอดขายรายกลุ่ม/ตะกร้า",
+  "permissions": ["unlimitedStorage", "storage", "downloads", "activeTab", "tabs"],
+  "host_permissions": ["https://seller.shopee.co.th/*", "https://*.shopee.co.th/*"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_popup": "popup.html", "default_title": "Shopee Ads Reader" },
+  "content_scripts": [
+    {
+      "matches": ["https://seller.shopee.co.th/*", "https://*.shopee.co.th/*"],
+      "js": ["inject.js"],
+      "run_at": "document_start",
+      "world": "MAIN",
+      "all_frames": false
+    },
+    {
+      "matches": ["https://seller.shopee.co.th/*", "https://*.shopee.co.th/*"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ]
+}

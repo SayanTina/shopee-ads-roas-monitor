@@ -1,0 +1,45 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>
+  body { font: 13px/1.45 system-ui, 'Noto Sans Thai', sans-serif; width: 340px; margin: 0; padding: 12px; color: #222; }
+  h1 { font-size: 15px; margin: 0 0 8px; }
+  button { font: inherit; padding: 6px 10px; margin: 2px 0; width: 100%; cursor: pointer; text-align: left; }
+  button.primary { background: #ee4d2d; color: #fff; border: 0; border-radius: 4px; }
+  button.stop { background: #fff; border: 1px solid #c00; color: #c00; border-radius: 4px; }
+  .row { display: flex; gap: 6px; align-items: center; margin: 4px 0; }
+  .row input[type=number] { width: 60px; }
+  .muted { color: #666; font-size: 12px; }
+  #log { white-space: pre-wrap; background: #f6f6f6; border-radius: 4px; padding: 6px; max-height: 140px; overflow: auto; font-size: 11px; margin-top: 6px; }
+  hr { border: 0; border-top: 1px solid #ddd; margin: 10px 0; }
+</style>
+<h1>Shopee Ads Reader <span id="ver" style="font-weight:400;font-size:12px;color:#666"></span></h1>
+<div class="muted" id="count">ข้อมูลที่ดักไว้: …</div>
+
+<hr>
+<b>0. เลือกช่วงวันที่</b>
+<div class="row"><input type="date" id="d1"> ถึง <input type="date" id="d2"></div>
+<div class="row"><button id="lastmonth" style="width:auto">เดือนที่แล้ว</button><button id="thismonth" style="width:auto">เดือนนี้</button></div>
+<button class="primary" id="setrange">ไปที่ช่วงวันที่นี้ (โหลดหน้าใหม่)</button>
+<div class="muted" id="period">ช่วงวันที่ของข้อมูลที่ดักไว้: —</div>
+
+<hr>
+<b>1. หน้าที่เปิดอยู่</b>
+<div class="muted">เปิดหน้า Ads ที่ต้องการ ตั้งช่วงวันที่ให้ตรงกับเดือนที่วิเคราะห์ แล้วรอตารางโหลดให้ครบ</div>
+<button class="primary" id="save">บันทึกข้อมูลที่ดักได้เป็น CSV</button>
+<button id="scrape">บันทึกตารางที่เห็นบนหน้าเป็น CSV (สำรอง)</button>
+
+<hr>
+<b>2. วนเข้าแต่ละกลุ่มโฆษณา</b>
+<div class="muted">เปิดหน้ารายการกลุ่มโฆษณา แล้วกดเริ่ม ระบบจะเข้าทีละแถว รอข้อมูลโหลด แล้วย้อนกลับ ไม่กด Export</div>
+<div class="row">เริ่มแถวที่ <input type="number" id="from" value="1" min="1"> จำนวน <input type="number" id="limit" value="5" min="1"> แถว</div>
+<button class="primary" id="batch">เริ่มวนอ่านกลุ่ม</button>
+<button class="stop" id="stop">หยุด</button>
+<div id="log" class="muted">—</div>
+
+<hr>
+<label><input type="checkbox" id="debug"> โหมดตรวจสอบ (ดักทุก JSON ไม่เลือก URL)</label>
+<div class="muted">ใช้ตอนข้อมูลไม่ขึ้น เพื่อดูว่าหน้าใช้ API ตัวไหน</div>
+<button id="rawdump">บันทึกข้อมูลดิบทั้งหมดเป็น JSON</button>
+<button id="clear">ล้างข้อมูลที่ดักไว้</button>
+<script src="lib/normalize.js"></script>
+<script src="popup.js"></script>

@@ -1,0 +1,830 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ตรวจ ROAS โฆษณา Shopee</title>
+<style>
+:root {
+  --bg: #f6f6f4; --panel: #ffffff; --fg: #1d1d1b; --muted: #6b6b66; --line: #e2e2dd;
+  --accent: #ee4d2d; --ok: #1a7f4b; --warn: #b7791f; --bad: #c0392b; --info: #3b6fb6;
+  --ok-bg: #e4f4ea; --warn-bg: #fbf0d9; --bad-bg: #fbe5e1; --info-bg: #e6eef8; --gray-bg: #ececea;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161616; --panel: #212121; --fg: #ecece8; --muted: #a0a09a; --line: #333330;
+    --accent: #ff7a5c; --ok: #5ccf94; --warn: #e5b04e; --bad: #ff8a7a; --info: #86aee6;
+    --ok-bg: #1c3226; --warn-bg: #3a2f16; --bad-bg: #3d2420; --info-bg: #1f2c3f; --gray-bg: #2c2c2a;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 system-ui, -apple-system, 'Noto Sans Thai', 'Segoe UI', sans-serif; }
+.wrap { max-width: 1180px; margin: 0 auto; padding: 20px 16px 48px; display: flex; flex-direction: column; gap: 16px; }
+h1 { font-size: 1.5rem; margin: 0; font-weight: 600; }
+h2 { font-size: 1.05rem; margin: 0 0 8px; font-weight: 600; }
+.sub, .note { color: var(--muted); font-size: 12.5px; margin: 0; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px; min-width: 0; }
+.drops { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr)); gap: 12px; }
+.drop { border: 1.5px dashed var(--line); border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 6px; cursor: pointer; background: var(--panel); min-width: 0; }
+.drop.over { border-color: var(--accent); }
+.drop b { font-size: 13.5px; }
+.drop .st { font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
+.drop .st.ok { color: var(--ok); }
+.drop input { display: none; }
+button, select, input[type=search] { font: inherit; color: var(--fg); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; }
+button { cursor: pointer; }
+button.primary { background: var(--accent); color: #fff; border: 0; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.msgs { display: flex; flex-direction: column; gap: 6px; }
+.msg { padding: 8px 12px; border-radius: 8px; font-size: 13px; }
+.msg.warn { background: var(--warn-bg); } .msg.bad { background: var(--bad-bg); } .msg.info { background: var(--info-bg); }
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.kpi { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; min-width: 0; }
+.kpi span { display: block; color: var(--muted); font-size: 12px; }
+.kpi b { font-size: 1.35rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.bar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; background: var(--gray-bg); }
+.bar i { display: block; height: 100%; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12.5px; color: var(--muted); margin-top: 6px; }
+.legend em { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; font-style: normal; }
+.tw { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; font-variant-numeric: tabular-nums; }
+th { text-align: left; font-weight: 500; color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; cursor: pointer; user-select: none; background: var(--panel); position: sticky; top: 0; }
+td { padding: 7px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th.r, td.r { text-align: right; }
+td.nm { min-width: 220px; max-width: 360px; }
+td small { display: block; color: var(--muted); font-size: 11.5px; }
+tr:last-child td { border-bottom: 0; }
+.pill { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 12px; white-space: nowrap; }
+.s6 { background: var(--info-bg); color: var(--info); } .s0 { background: var(--ok-bg); color: var(--ok); } .s1 { background: var(--warn-bg); color: var(--warn); }
+.s2, .s3, .s4 { background: var(--bad-bg); color: var(--bad); } .s5 { background: var(--gray-bg); color: var(--muted); }
+.neg { color: var(--bad); } .pos { color: var(--ok); }
+.chart svg { display: block; width: 100%; height: auto; }
+.chart text { fill: var(--muted); font-size: 11px; }
+.chart text.v { fill: var(--fg); }
+.chart .grid { stroke: var(--line); }
+.hidden { display: none !important; }
+.tools { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.tools input[type=search] { flex: 1 1 200px; min-width: 0; }
+dialog { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--fg); width: min(980px, 96vw); padding: 16px; }
+dialog::backdrop { background: rgba(0,0,0,.45); }
+dialog input[type=number] { width: 90px; font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }
+footer { color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>ตรวจ ROAS โฆษณา Shopee</h1>
+    <p class="sub">อัปโหลดไฟล์ Order (BigSeller) และไฟล์ Ads จาก extension เพื่อดูว่าค่าโฆษณาของแต่ละสินค้าได้ ROAS ตามเป้าหรือไม่ ไฟล์ทั้งหมดประมวลผลในเครื่องของคุณ ไม่ถูกส่งออก</p>
+  </header>
+
+  <section class="drops">
+    <label class="drop" id="drop-orders"><b>1. ไฟล์ Order (Order-SKU .xlsx จาก BigSeller)</b><span class="st" id="st-orders">ยังไม่ได้เลือก ลากไฟล์มาวางหรือคลิก</span><input type="file" id="f-orders" accept=".xlsx,.xls"></label>
+    <label class="drop" id="drop-ads"><b>2. ไฟล์ Ads (ads_dump_*.json จาก extension) เลือกได้หลายไฟล์</b><span class="st" id="st-ads">ยังไม่ได้เลือก ลากไฟล์มาวางหรือคลิก</span><input type="file" id="f-ads" accept=".json" multiple></label>
+    <div class="drop" id="drop-targets" style="cursor:default"><b>3. เป้า ROAS</b><span class="st" id="st-targets">ยังไม่ได้โหลด</span>
+      <div class="row">
+        <label class="row" style="cursor:pointer"><span style="text-decoration:underline">อัปโหลดไฟล์เป้า roas-targets-staff.json</span><input type="file" id="f-targets" accept=".json"></label>
+        <button id="btn-clear-targets" class="hidden">ล้างเป้าที่จำไว้</button>
+      </div>
+    </div>
+  </section>
+
+  <div class="card" style="padding:10px 14px">
+    <label class="row" style="cursor:pointer;gap:8px"><input type="checkbox" id="chk-transit" checked> <span>รวมออเดอร์ที่ยังอยู่ระหว่างจัดส่ง (จัดส่งแล้ว / รอรับสินค้า / คำสั่งซื้อใหม่ ฯลฯ ที่ยังไม่ "สำเร็จแล้ว")</span></label>
+    <p class="note" style="margin-top:4px">ออเดอร์ "ยกเลิกแล้ว" และ "ยังไม่ชำระ" ไม่นับเสมอ ถ้าไม่ติ๊ก จะนับเฉพาะ "สำเร็จแล้ว" (ยอดจะน้อยลง ROAS ต่ำลง โดยเฉพาะช่วงที่ยังจัดส่งไม่เสร็จ)</p>
+    <p class="note" id="orderbreak" style="margin-top:4px"></p>
+
+    <label class="row" style="cursor:pointer;gap:8px;margin-top:8px"><input type="checkbox" id="chk-zero" checked> <span>ยอมกำไร 0% ได้ตามนโยบายของสินค้าที่กำหนดไว้ในไฟล์เป้า (ขึ้นสถานะ "ผ่านที่จุดคุ้มทุน" แยกจาก "ผ่านเป้า")</span></label>
+    <p class="note" style="margin-top:4px">ถ้าไม่ติ๊ก ทุกสินค้าต้องได้ ROAS ตามเป้าในไฟล์ สถานะ "ผ่านเป้า" ในหน้านี้หมายถึงถึงเป้าเต็มเสมอ</p>
+  </div>
+  <div class="row hidden" id="periodrow"><label for="fperiod" class="sub">ช่วงวันที่ของ Ads ที่ใช้คำนวณ</label><select id="fperiod"></select></div>
+  <div class="msgs" id="msgs"></div>
+
+  <section id="results" class="hidden" style="display:flex;flex-direction:column;gap:16px">
+    <div class="card hidden" id="missingcard">
+      <h2>กลุ่มโฆษณาที่มีค่าโฆษณาแต่ยังไม่มีข้อมูลรายสินค้า</h2>
+      <p class="note">เป็นเรื่องของข้อมูลโฆษณา ไม่ใช่เป้า ROAS วิธีแก้ที่ตรงที่สุดคือเปิดกลุ่มเหล่านี้ใน Shopee Ads (หรือใช้ปุ่ม "วนอ่านกลุ่ม" ใน extension) แล้วบันทึกไฟล์ Ads ใหม่ แล้วอัปโหลดทับ ไม่ต้องแก้ไฟล์เป้า</p>
+      <div class="tw" style="margin-top:8px"><table id="tbl-missing"><thead><tr><th>กลุ่มโฆษณา</th><th class="r">ค่าโฆษณา</th><th class="r">สินค้าในกลุ่ม</th><th class="r">สินค้าที่มียอดขายใน Order</th></tr></thead><tbody></tbody></table></div>
+      <label class="row" style="cursor:pointer;gap:8px;margin-top:8px"><input type="checkbox" id="chk-estimate"> <span>กระจายค่าโฆษณาของกลุ่มเหล่านี้ไปยังสินค้าในกลุ่มตามยอดขาย Order (ประมาณ) เพื่อดูภาพรวมก่อนมีข้อมูลจริง</span></label>
+      <p class="note" style="margin-top:4px">ตัวเลขที่ประมาณจะติดป้าย "ประมาณ" ในตารางสินค้า และสมมติว่าทุกสินค้าในกลุ่มมี ROAS เท่ากัน ไม่ควรใช้ตัดสินใจรายสินค้า</p>
+    </div>
+    <div class="kpis" id="kpis"></div>
+
+    <div class="card">
+      <h2>ค่าโฆษณาแยกตามสถานะ ROAS</h2>
+      <div class="bar" id="statusbar"></div>
+      <div class="legend" id="statuslegend"></div>
+
+      <p class="note" style="margin-top:4px">ROAS จริง = ยอดขายจาก Order ของสินค้านั้น (ทุกช่องทาง) ÷ ค่าโฆษณา เทียบกับ ROAS ที่ต้องได้ในชีตเป้า ส่วน ROAS ที่ Shopee รายงานแสดงไว้เป็นข้อมูลประกอบ</p>
+    </div>
+
+    <div class="card">
+      <h2>รายวัน</h2>
+      <div class="chart" id="daily"></div>
+    </div>
+
+    <div class="card">
+      <h2>ตามกลุ่มสินค้า</h2>
+      <div class="tw"><table id="tbl-groups"><thead></thead><tbody></tbody></table></div>
+
+      <p class="note" style="margin-top:6px">ROAS เท่าทุน/เป้าของกลุ่มรวมจากเกณฑ์ของแต่ละสินค้าในกลุ่มแบบถ่วงน้ำหนักด้วยยอดขาย ส่วน ROAS จริง = ยอดขายรวมของกลุ่ม ÷ ค่าโฆษณารวมของกลุ่ม</p>
+    </div>
+
+    <div class="card">
+      <h2>รายสินค้า (listing)</h2>
+      <div class="tools">
+        <input type="search" id="q" placeholder="ค้นหาชื่อสินค้า หรือ item_id">
+        <select id="fgroup"><option value="">ทุกกลุ่มสินค้า</option></select>
+        <select id="fstatus"><option value="">ทุกสถานะ</option></select>
+        <button id="btn-csv">ดาวน์โหลด CSV</button>
+      </div>
+      <div class="tw" style="max-height:70vh"><table id="tbl-items"><thead></thead><tbody></tbody></table></div>
+      <p class="note" style="margin-top:6px" id="items-count"></p>
+    </div>
+  </section>
+
+
+
+<footer>ROAS ที่ต้องได้มาจากไฟล์เป้าที่ผู้จัดการให้ ยอดขายเป็นยอดก่อนหัก Voucher และค่าธรรมเนียม ROAS ที่ Shopee รายงานแสดงไว้เป็นข้อมูลประกอบ</footer>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script>
+// แปลง JSON ที่ดักได้จาก Shopee Ads ให้เป็นตาราง (ใช้ทั้งใน popup และทดสอบด้วย node)
+(function (root) {
+  const isObj = (v) => v && typeof v === 'object' && !Array.isArray(v);
+
+  function flatten(o, prefix, out) {
+    for (const [k, v] of Object.entries(o)) {
+      const key = prefix ? prefix + '.' + k : k;
+      if (isObj(v)) flatten(v, key, out);
+      else if (Array.isArray(v)) {
+        if (v.every((x) => x === null || typeof x !== 'object')) out[key] = v.join('|');
+        // อาร์เรย์ของออบเจ็กต์ซ้อนอยู่ข้างใน: ข้าม (ถูกดึงเป็นตารางแยกอยู่แล้ว)
+      } else out[key] = v;
+    }
+    return out;
+  }
+
+  // หาอาร์เรย์ของออบเจ็กต์ทุกชั้นใน JSON (เช่น data.entry_list)
+  function findTables(node, path, found) {
+    if (Array.isArray(node)) {
+      const objs = node.filter(isObj);
+      if (objs.length && objs.length === node.length && Object.keys(objs[0]).length >= 3) found.push({ path, rows: objs });
+      node.forEach((x, i) => { if (isObj(x) || Array.isArray(x)) findTables(x, path + '[]', found); });
+    } else if (isObj(node)) {
+      for (const [k, v] of Object.entries(node)) if (v && typeof v === 'object') findTables(v, path ? path + '.' + k : k, found);
+    }
+    return found;
+  }
+
+  function rawRows(caps) {
+    const rows = [];
+    for (const c of caps) {
+      let j;
+      try { j = JSON.parse(c.body); } catch (e) { continue; }
+      const u = new URL(c.url, 'https://x');
+      const tag = { _api: u.pathname, _captured_at: new Date(c.ts).toISOString(), _page: c.page || '', _group: c.group || '' };
+      for (const t of findTables(j, '', [])) {
+        for (const r of t.rows) rows.push(Object.assign({}, tag, { _table: t.path }, flatten(r, '', {})));
+      }
+    }
+    return rows;
+  }
+
+  // ชื่อฟิลด์ปลายทาง -> รูปแบบชื่อคอลัมน์ที่น่าจะเป็น (เรียงตามลำดับความสำคัญ)
+  const MAP = {
+    item_id: [/(^|\.)item_?id$/i, /(^|\.)product_?id$/i],
+    campaign_id: [/(^|\.)campaign_?id$/i, /(^|\.)ad_?id$/i],
+    name: [/(^|\.)(ad_?name|campaign_?name|item_?name|product_?name|title|name)$/i],
+    status: [/(^|\.)(state|status)$/i],
+    expense: [/(^|\.)report\.expense$/i, /(^|\.)(expense|spend|cost)$/i],
+    gmv: [/(^|\.)broad_gmv$/i, /(^|\.)gmv$/i, /(^|\.)direct_gmv$/i],
+    orders: [/(^|\.)broad_order$/i, /(^|\.)order(s)?$/i, /(^|\.)direct_order$/i],
+    clicks: [/(^|\.)click(s)?$/i],
+    impressions: [/(^|\.)impression(s)?$/i],
+    roas: [/(^|\.)broad_roi$/i, /(^|\.)roas$/i, /(^|\.)direct_roi$/i]
+  };
+
+  function pick(row, pats) {
+    const keys = Object.keys(row);
+    for (const p of pats) {
+      const k = keys.find((x) => p.test(x) && row[x] !== '' && row[x] != null);
+      if (k) return row[k];
+    }
+    return '';
+  }
+
+  function normalize(raw) {
+    const out = [];
+    for (const r of raw) {
+      const n = {};
+      for (const [f, pats] of Object.entries(MAP)) n[f] = pick(r, pats);
+      // เก็บเฉพาะแถวที่มีตัวเลขโฆษณาจริง และระบุสินค้า/แคมเปญได้
+      if ((n.expense === '' && n.gmv === '') || (n.item_id === '' && n.campaign_id === '')) continue;
+      n._group = r._group; n._api = r._api; n._captured_at = r._captured_at; n._page = r._page;
+      out.push(n);
+    }
+    // ตัดแถวซ้ำที่เกิดจากการดักซ้ำของคำขอเดียวกัน เก็บอันที่ใหม่สุด
+    const seen = new Map();
+    for (const n of out) seen.set([n._api, n._group, n.item_id, n.campaign_id, n.expense, n.gmv, n.clicks].join('|'), n);
+    return [...seen.values()];
+  }
+
+  function toCSV(rows, cols) {
+    if (!rows.length) return '';
+    cols = cols || [...rows.reduce((s, r) => { Object.keys(r).forEach((k) => s.add(k)); return s; }, new Set())];
+    const esc = (v) => {
+      v = v == null ? '' : String(v);
+      return /[",\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+    };
+    return '﻿' + [cols.join(',')].concat(rows.map((r) => cols.map((c) => esc(r[c])).join(','))).join('\r\n');
+  }
+
+  // ---------- ตัวอ่านเฉพาะ Shopee Ads (โครงสร้างจริงที่ตรวจจากไฟล์ dump) ----------
+  // หน่วยเงินใน API เป็น 1/100000 บาท (เช่น cost 13858918 = ฿138.59)
+  const MONEY_DIV = 100000;
+  const pathOf = (u) => { try { return new URL(u, 'https://x').pathname; } catch (e) { return u; } };
+  const periodOf = (page) => {
+    const p = new URLSearchParams((page || '').split('?')[1] || '');
+    const d = (s) => (s ? new Date((s + 7 * 3600) * 1000).toISOString().slice(0, 10) : '');
+    return { from: d(+p.get('from')), to: d(+p.get('to')) };
+  };
+  const metricRow = (rep) => ({
+    cost: (rep.cost || 0) / MONEY_DIV, gmv: (rep.broad_gmv || 0) / MONEY_DIV, orders: rep.broad_order || 0,
+    clicks: rep.click || 0, impressions: rep.impression || 0, roas: rep.broad_roi || 0,
+    atc: rep.atc || 0, voucher: (rep.voucher_amount || 0) / MONEY_DIV
+  });
+
+  function shopeeRows(caps) {
+    const rows = [], campName = {}, parsed = [];
+    for (const c of caps) {
+      let j; try { j = JSON.parse(c.body); } catch (e) { continue; }
+      if (!j || j.code !== 0 || !j.data) continue;
+      parsed.push({ c, j, path: pathOf(c.url), per: periodOf(c.page) });
+    }
+    for (const { j, path } of parsed) {
+      if (path.endsWith('/pas/v1/product/get/') && j.data.campaign) campName[j.data.campaign.campaign_id] = j.data.campaign.name;
+      if (path.endsWith('/pas/v1/homepage/query/') && j.data.entry_list)
+        for (const e of j.data.entry_list) campName[e.campaign.campaign_id] = e.title;
+    }
+    for (const { c, j, path, per } of parsed) {
+      const base = { period_from: per.from, period_to: per.to, captured_at: new Date(c.ts).toISOString() };
+      if (path.endsWith('/pas/v1/homepage/query/') && j.data.entry_list) {
+        for (const e of j.data.entry_list) {
+          const items = ((e.mpd && e.mpd.item_list) || []).map((x) => x.item_id);
+          const single = e.manual_product_ads && e.manual_product_ads.item_id;
+          rows.push(Object.assign({}, base, {
+            level: 'campaign', campaign_id: e.campaign.campaign_id, campaign_name: e.title, state: e.state, type: e.type,
+            item_id: single || '', item_name: single ? e.title : '', member_items: items.join('|')
+          }, metricRow(e.report || {})));
+        }
+      }
+      if (path.endsWith('/product/mpd/list_item_product_performance/') && j.data.result_list) {
+        const m = /manual-mpd\/(\d+)/.exec(c.page || '');
+        const cid = m ? +m[1] : '';
+        for (const r of j.data.result_list) {
+          rows.push(Object.assign({}, base, {
+            level: 'item', campaign_id: cid, campaign_name: campName[cid] || c.group || '', state: '', type: 'product_mpd',
+            item_id: r.item_id, item_name: r.name, member_items: ''
+          }, metricRow(r.report || {})));
+        }
+      }
+    }
+    const best = new Map();
+    for (const r of rows) {
+      const k = [r.level, r.campaign_id, r.item_id, r.period_from, r.period_to].join('|');
+      if (!best.has(k) || best.get(k).captured_at <= r.captured_at) best.set(k, r);
+    }
+    return [...best.values()];
+  }
+  // ข้อมูลรายวัน: report/get_time_graph แบ่งเป็นช่วงเวลา (วันเดียวแบ่งทุก 15 นาที) รวมเป็นรายวันตามเวลาไทย
+  // หน้ารายการ = ทั้งร้าน (scope 'shop'), หน้าในกลุ่ม = กลุ่มโฆษณานั้น (ไม่แยกรายสินค้า API ไม่ให้ข้อมูลรายวันต่อสินค้า)
+  function dailyRows(caps) {
+    const names = {}, buckets = new Map();
+    for (const c of caps) {
+      let j; try { j = JSON.parse(c.body); } catch (e) { continue; }
+      if (!j || j.code !== 0 || !j.data) continue;
+      const p = pathOf(c.url);
+      if (p.endsWith('/pas/v1/product/get/') && j.data.campaign) names[j.data.campaign.campaign_id] = j.data.campaign.name;
+      if (p.endsWith('/pas/v1/homepage/query/') && j.data.entry_list) for (const e of j.data.entry_list) names[e.campaign.campaign_id] = e.title;
+    }
+    for (const c of caps) {
+      if (!pathOf(c.url).endsWith('/pas/v1/report/get_time_graph/')) continue;
+      let j; try { j = JSON.parse(c.body); } catch (e) { continue; }
+      const rb = j && j.data && j.data.report_by_time;
+      if (!rb) continue;
+      const m = /manual-mpd\/(\d+)/.exec(c.page || '');
+      const cid = m ? m[1] : '';
+      const per = periodOf(c.page);
+      for (const b of rb) {
+        const k = [cid, per.from, per.to, b.key].join('|');
+        const prev = buckets.get(k);
+        if (!prev || prev.ts <= c.ts) buckets.set(k, { ts: c.ts, cid, per, key: +b.key, met: b.metrics || {} });
+      }
+    }
+    // ช่วงวันที่หลายช่วงอาจซ้อนกัน (เช่น 1 วัน กับ 1–9 พ.ย.) เลือกช่วงที่กว้างที่สุดต่อ (กลุ่ม, วัน) กันนับซ้ำ
+    const span = (per) => (per.from && per.to ? Date.parse(per.to) - Date.parse(per.from) : -1);
+    const win = new Map();
+    for (const b of buckets.values()) {
+      const date = new Date((b.key + 7 * 3600) * 1000).toISOString().slice(0, 10);
+      const k = b.cid + '|' + date, ps = span(b.per) + '|' + b.per.from + '|' + b.per.to;
+      if (!win.has(k) || win.get(k) < ps) win.set(k, ps);
+      b.date = date; b.ps = ps;
+    }
+    const days = new Map();
+    for (const b of buckets.values()) {
+      const date = b.date;
+      const k = b.cid + '|' + date;
+      if (b.ps !== win.get(k) || span(b.per) < 0) continue;
+      if (!days.has(k)) days.set(k, { scope: b.cid ? 'campaign' : 'shop', campaign_id: b.cid, campaign_name: b.cid ? (names[b.cid] || '') : 'ทั้งร้าน', date, cost: 0, gmv: 0, orders: 0, clicks: 0, impressions: 0, atc: 0 });
+      const d = days.get(k), r = metricRow(b.met);
+      d.cost += r.cost; d.gmv += r.gmv; d.orders += r.orders; d.clicks += r.clicks; d.impressions += r.impressions; d.atc += r.atc;
+    }
+    const out = [...days.values()];
+    out.forEach((d) => { d.roas = d.cost > 0 ? d.gmv / d.cost : 0; });
+    return out.sort((a, b) => (a.campaign_id + a.date < b.campaign_id + b.date ? -1 : 1));
+  }
+  const DAILY_COLS = ['scope', 'campaign_id', 'campaign_name', 'date', 'cost', 'gmv', 'orders', 'clicks', 'impressions', 'atc', 'roas'];
+
+  // เลือกช่วงวันที่ที่กว้างที่สุด (เท่ากันเอาช่วงที่ใหม่กว่า) ใช้กันนับซ้ำเมื่อดักข้อมูลหลายช่วงปนกัน
+  function widestPeriod(rows) {
+    let best = null;
+    for (const r of rows) {
+      if (!r.period_from || !r.period_to) continue;
+      const s = Date.parse(r.period_to) - Date.parse(r.period_from);
+      if (!best || s > best.s || (s === best.s && r.period_to > best.to)) best = { s, from: r.period_from, to: r.period_to };
+    }
+    return best;
+  }
+  const inPeriod = (rows, p) => (p ? rows.filter((r) => r.period_from === p.from && r.period_to === p.to) : rows);
+
+  const SHOPEE_COLS = ['level', 'period_from', 'period_to', 'campaign_id', 'campaign_name', 'state', 'type', 'item_id', 'item_name',
+    'cost', 'gmv', 'orders', 'clicks', 'impressions', 'roas', 'atc', 'voucher', 'member_items', 'captured_at'];
+
+  const api = { flatten, findTables, rawRows, normalize, toCSV, MAP, shopeeRows, SHOPEE_COLS, dailyRows, DAILY_COLS, widestPeriod, inPeriod };
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  else root.AdsNormalize = api;
+})(typeof self !== 'undefined' ? self : this);
+
+</script>
+<script>
+(function () {
+  const N = self.AdsNormalize;
+  const $ = (id) => document.getElementById(id);
+  const fmtInt = (v) => Math.round(v).toLocaleString('en-US');
+  const baht = (v) => '฿' + fmtInt(v);
+  const r1 = (v) => (v == null || !isFinite(v) ? '—' : v.toFixed(1));
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+
+  const state = { orders: null, adsRaw: null, ads: null, targets: null, sort: { items: ['cost', -1], groups: ['cost', -1] }, estimateMissing: false, zeroOK: true };
+
+  // ---------- สถานะ ----------
+  const STATUS = [
+    { id: 0, label: 'ผ่านเป้า (กำไร ≥ 5%)', color: 'var(--ok)' },
+    { id: 1, label: 'คุ้มทุนแต่ต่ำกว่าเป้ากำไร', color: 'var(--warn)' },
+    { id: 2, label: 'ต่ำกว่าจุดคุ้มทุน', color: 'var(--bad)' },
+    { id: 3, label: 'ใช้โฆษณาแต่ไม่มียอดขาย', color: '#8e2a1e' },
+    { id: 4, label: 'ขาดทุนอยู่แล้ว ไม่ควรยิง', color: '#5e1a12' },
+    { id: 5, label: 'ไม่มีเกณฑ์ในชีตเป้า', color: '#9a9a94' },
+    { id: 6, label: 'ผ่านที่จุดคุ้มทุน (กำไร 0%)', color: 'var(--info)' }
+  ];
+  const sLabel = (i) => STATUS[i].label;
+
+  // ---------- อ่านไฟล์ ----------
+  const TH = { 'ม.ค.': 1, 'ก.พ.': 2, 'มี.ค.': 3, 'เม.ย.': 4, 'พ.ค.': 5, 'มิ.ย.': 6, 'ก.ค.': 7, 'ส.ค.': 8, 'ก.ย.': 9, 'ต.ค.': 10, 'พ.ย.': 11, 'ธ.ค.': 12 };
+  function thDate(v) {
+    if (v instanceof Date) return v.toISOString().slice(0, 10);
+    const p = String(v || '').trim().split(/\s+/);
+    if (p.length < 3 || !TH[p[1]]) return null;
+    let y = +p[2]; if (y > 2400) y -= 543;
+    return y + '-' + String(TH[p[1]]).padStart(2, '0') + '-' + String(+p[0]).padStart(2, '0');
+  }
+  const readBuf = (file) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsArrayBuffer(file); });
+  const readText = (file) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsText(file); });
+
+  async function loadOrders(file) {
+    if (typeof XLSX === 'undefined') throw new Error('โหลดตัวอ่าน Excel ไม่สำเร็จ ตรวจสอบอินเทอร์เน็ตแล้วรีเฟรชหน้า');
+    const wb = XLSX.read(await readBuf(file), { type: 'array', cellDates: false });
+    const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
+    if (!rows.length) throw new Error('ไฟล์ว่าง');
+    const need = ['สถานะคำสั่งซื้อ', 'ID สินค้า', 'รวมค่าสินค้า', 'เวลาสั่งซื้อ'];
+    const miss = need.filter((k) => !(k in rows[0]));
+    if (miss.length) throw new Error('ไม่ใช่ไฟล์ Order-SKU ของ BigSeller (ไม่พบคอลัมน์ ' + miss.join(', ') + ')');
+    // จัดกลุ่มสถานะ: ยกเลิก/ยังไม่ชำระ = ไม่นับเสมอ · สำเร็จแล้ว = นับเสมอ · สถานะอื่นที่ยังไม่สำเร็จ (จัดส่งแล้ว รอรับสินค้า คำสั่งซื้อใหม่ ฯลฯ) = ระหว่างจัดส่ง นับเมื่อติ๊กตัวเลือก
+    const byItem = {}, byDay = {}, byStatus = {}, L = []; let n = 0, from = '9999', to = '0000', cancel = 0, unpaid = 0;
+    for (const r of rows) {
+      const stt = String(r['สถานะคำสั่งซื้อ']).trim();
+      if (stt === 'ยกเลิกแล้ว') { cancel++; continue; }
+      if (stt === 'ยังไม่ชำระ') { unpaid++; continue; }
+      const cls = stt === 'สำเร็จแล้ว' ? 'done' : 'transit';
+      const id = String(r['ID สินค้า']).trim().replace(/\.0$/, '');
+      const sales = Number(r['รวมค่าสินค้า']) || 0;
+      const d = thDate(r['เวลาสั่งซื้อ']);
+      const it = byItem[id] || (byItem[id] = { done: 0, transit: 0, name: '' });
+      it[cls] += sales; if (!it.name) it.name = String(r['ชื่อสินค้า'] || '');
+      if (d) { const dd = byDay[d] || (byDay[d] = { done: 0, transit: 0 }); dd[cls] += sales; if (d < from) from = d; if (d > to) to = d; }
+      L.push({ oid: String(r['หมายเลขคำสั่งซื้อ'] || ''), id, sku: String(r['SKU Merchant'] || '').trim(), q: Number(r['จำนวน']) || 0, rev: sales, cls, day: d });
+      const bs = byStatus[stt] || (byStatus[stt] = { cls, n: 0, sales: 0 }); bs.n++; bs.sales += sales;
+      n++;
+    }
+    if (!n) throw new Error('ไม่พบออเดอร์ที่ไม่ถูกยกเลิก');
+    return { byItem, byDay, byStatus, cancel, unpaid, from, to, lines: n, L };
+  }
+
+
+
+  function effectiveOrders(raw, includeTransit) {
+    const byItem = {}, byDay = {}, bySku = {}; let total = 0, lines = 0;
+    for (const l of raw.L) {
+      if (!(l.cls === 'done' || includeTransit)) continue;
+      if (l.day) byDay[l.day] = (byDay[l.day] || 0) + l.rev;
+      total += l.rev;
+      const it = byItem[l.id] || (byItem[l.id] = { sales: 0, units: 0, name: (raw.byItem[l.id] && raw.byItem[l.id].name) || '' });
+      if (l.rev > 0) { it.sales += l.rev; it.units += l.q; if (l.sku) { const k = bySku[l.sku] || (bySku[l.sku] = { sales: 0, units: 0 }); k.sales += l.rev; k.units += l.q; } }
+    }
+    for (const s of Object.values(raw.byStatus)) if (s.cls === 'done' || includeTransit) lines += s.n;
+    return { byItem, byDay, bySku, from: raw.from, to: raw.to, lines, total };
+  }
+
+  function applyOrderOption() {
+    if (!state.ordersRaw) return;
+    state.orders = effectiveOrders(state.ordersRaw, $('chk-transit').checked);
+    const r = state.ordersRaw;
+    const parts = Object.entries(r.byStatus).sort((a, b) => b[1].sales - a[1].sales).map(([k, v]) => k + ' ' + fmtInt(v.n) + ' แถว ' + baht(v.sales) + ((v.cls === 'done' || $('chk-transit').checked) ? '' : ' (ไม่นับ)'));
+    if (r.unpaid) parts.push('ยังไม่ชำระ ' + fmtInt(r.unpaid) + ' แถว (ไม่นับ)');
+    if (r.cancel) parts.push('ยกเลิกแล้ว ' + fmtInt(r.cancel) + ' แถว (ไม่นับ)');
+    $('orderbreak').textContent = 'สถานะในไฟล์: ' + parts.join(' · ');
+    $('st-orders').textContent = $('st-orders').dataset.file + ' · ' + fmtInt(state.orders.lines) + ' แถวที่นับ · ' + state.orders.from + ' ถึง ' + state.orders.to;
+  }
+
+  async function loadAds(files) {
+    const caps = [];
+    for (const f of files) {
+      let j;
+      try { j = JSON.parse(await readText(f)); } catch (e) { throw new Error(f.name + ' ไม่ใช่ไฟล์ JSON'); }
+      if (!Array.isArray(j) || !j.length || !j[0].url || j[0].body == null) throw new Error(f.name + ' ไม่ใช่ไฟล์ที่บันทึกจาก extension (ใช้ปุ่ม "บันทึกข้อมูลดิบทั้งหมดเป็น JSON")');
+      caps.push(...j);
+    }
+    const all = N.shopeeRows(caps);
+    if (!all.length) throw new Error('ไม่พบข้อมูลโฆษณาในไฟล์ (ต้องเปิดหน้ารายการกลุ่มโฆษณาและหน้าในกลุ่มก่อนบันทึก)');
+    const periods = [...new Map(all.filter((r) => r.period_from && r.period_to).map((r) => [r.period_from + '..' + r.period_to, { from: r.period_from, to: r.period_to }])).values()]
+      .sort((a, b) => (a.from < b.from ? 1 : -1));
+    if (!periods.length) throw new Error('ไม่พบช่วงวันที่ในข้อมูลโฆษณา');
+    return { caps, all, periods };
+  }
+
+  const dayNum = (s) => Math.round(Date.parse(s) / 86400000);
+  // เลือกช่วงของ Ads ที่ทับซ้อนกับช่วงของ Order มากที่สุด (ไม่มี Order ใช้ช่วงที่กว้างที่สุด)
+  function bestPeriod(periods, orders) {
+    let best = null;
+    for (const p of periods) {
+      const span = dayNum(p.to) - dayNum(p.from) + 1;
+      let score = span;
+      if (orders) {
+        const ov = Math.min(dayNum(p.to), dayNum(orders.to)) - Math.max(dayNum(p.from), dayNum(orders.from)) + 1;
+        const un = Math.max(dayNum(p.to), dayNum(orders.to)) - Math.min(dayNum(p.from), dayNum(orders.from)) + 1;
+        score = Math.max(0, ov) / un;
+      }
+      if (!best || score > best.score) best = { p, score };
+    }
+    return best.p;
+  }
+  const pkey = (p) => p.from + '..' + p.to;
+
+  function buildAds(raw, wp) {
+    const all = raw.all, caps = raw.caps;
+    const rows = N.inPeriod(all, wp);
+    const others = raw.periods.length - 1;
+    const daily = N.dailyRows(caps).filter((d) => d.scope === 'shop' && d.date >= wp.from && d.date <= wp.to);
+    const items = {};
+    const add = (r) => {
+      const it = items[r.item_id] || (items[r.item_id] = { id: String(r.item_id), name: r.item_name, cost: 0, gmv: 0, clicks: 0, groups: new Set() });
+      it.cost += r.cost; it.gmv += r.gmv; it.clicks += r.clicks; if (r.campaign_name) it.groups.add(r.campaign_name);
+      if (!it.name) it.name = r.item_name;
+    };
+    const visited = new Set(rows.filter((r) => r.level === 'item').map((r) => String(r.campaign_id)));
+    rows.filter((r) => r.level === 'item').forEach(add);
+    rows.filter((r) => r.level === 'campaign' && r.item_id).forEach(add);           // โฆษณาสินค้าเดี่ยว
+    Object.keys(items).forEach((k) => { if (!(items[k].cost > 0)) delete items[k]; });   // ไม่แสดงสินค้าที่ไม่มีค่าโฆษณา
+    const missing = rows.filter((r) => r.level === 'campaign' && !r.item_id && r.cost > 0 && !visited.has(String(r.campaign_id)));
+    const campTotal = rows.filter((r) => r.level === 'campaign').reduce((s, r) => s + r.cost, 0);
+    return { items, period: wp, others, daily, missing, campTotal, total: Object.values(items).reduce((s, x) => s + x.cost, 0) };
+  }
+
+  function applyPeriod() {
+    if (!state.adsRaw || !state.adsRaw.periods) return;
+    const sel = $('fperiod');
+    const wp = state.adsRaw.periods.find((p) => pkey(p) === state.periodKey) || bestPeriod(state.adsRaw.periods, state.orders);
+    state.periodKey = pkey(wp);
+    sel.innerHTML = state.adsRaw.periods.map((p) => '<option value="' + pkey(p) + '">' + p.from + ' ถึง ' + p.to + '</option>').join('');
+    sel.value = state.periodKey;
+    $('periodrow').classList.toggle('hidden', state.adsRaw.periods.length < 2);
+    state.ads = buildAds(state.adsRaw, wp);
+    $('st-ads').textContent = state.adsFiles + ' · ' + wp.from + ' ถึง ' + wp.to + ' · ' + fmtInt(Object.keys(state.ads.items).length) + ' สินค้า';
+    $('st-ads').className = 'st ok';
+  }
+
+
+
+  function parseTargets(obj) {
+    if (!obj || obj.kind !== 'staff' || !Array.isArray(obj.items)) throw new Error('ไม่ใช่ไฟล์เป้าสำหรับพนักงาน (roas-targets-staff.json) ขอไฟล์ที่ถูกต้องจากผู้จัดการ');
+    state.targetsInfo = (obj.generated ? 'สร้างไฟล์เมื่อ ' + obj.generated : '') + (obj.period ? ' · ช่วงที่ใช้สร้าง ' + obj.period.from + ' ถึง ' + obj.period.to : '');
+    state.refPrices = obj.ref_prices || null;
+    const map = {};
+    for (const r of obj.items) map[String(r.item_id)] = r;
+    return map;
+  }
+
+  // ---------- คำนวณ ----------
+  // จัดสถานะจาก ROAS จริง เทียบเท่าทุน (be) และเป้า (tg) · zeroApplies = นโยบายยอมกำไร 0% ใช้กับสินค้า/กลุ่มนี้
+  function classify(roas, sales, x, zeroApplies) {
+    if (x.loss) return 4;
+    if (x.need == null && x.be == null && x.tg == null) return 4;
+    if (!(sales > 0)) return 3;
+    const tgOK = x.tg != null ? roas >= x.tg : (x.need != null && roas >= x.need);
+    if (tgOK) return 0;
+    if (x.be != null && roas >= x.be) return zeroApplies ? 6 : 1;
+    return 2;
+  }
+
+  function adsItemsWithEstimate() {
+    const items = {};
+    for (const [k, a] of Object.entries(state.ads.items)) items[k] = Object.assign({}, a, { est: 0 });
+    if (state.estimateMissing) {
+      for (const m of state.ads.missing) {
+        const members = String(m.member_items || '').split('|').filter(Boolean);
+        const w = members.map((id) => (state.orders.byItem[id] ? state.orders.byItem[id].sales : 0));
+        const tot = w.reduce((s, x) => s + x, 0);
+        if (tot > 0) {
+          members.forEach((id, i) => {
+            if (!(w[i] > 0)) return;
+            const c = m.cost * w[i] / tot;
+            const it = items[id] || (items[id] = { id, name: '', cost: 0, gmv: 0, clicks: 0, groups: new Set(), est: 0 });
+            it.cost += c; it.est += c; it.groups = new Set(it.groups); it.groups.add(m.campaign_name + ' (ประมาณ)');
+          });
+        } else {
+          const id = 'camp:' + m.campaign_id;
+          items[id] = { id, name: m.campaign_name + ' (กลุ่มโฆษณานี้ไม่มีรายสินค้า)', cost: m.cost, gmv: 0, clicks: 0, groups: new Set([m.campaign_name]), est: m.cost, pseudo: true };
+        }
+      }
+    }
+    return items;
+  }
+
+
+
+  function targetInfo(o, t) {
+    if (!t) return { has: false };
+    const be = t.roas_be == null ? null : t.roas_be, tg = t.roas_target == null ? null : t.roas_target;
+    const zeroApplies = state.zeroOK !== false && !!t.be_ok;
+    return { has: true, be, tg, need: zeroApplies ? be : tg, loss: !!t.loss, zeroApplies, mbe: t.m_be == null ? null : t.m_be, mtg: t.m_tg == null ? null : t.m_tg };
+  }
+  function groupOf(o, t) { return (t && t.group) || '(ไม่ระบุกลุ่ม)'; }
+
+
+  function compute() {
+    const { orders, ads, targets } = state;
+    if (!orders || !ads || !targets) return null;
+    const estItems = adsItemsWithEstimate();
+    const rows = Object.values(estItems).map((a) => {
+      const t = targets[a.id], o = orders.byItem[a.id];
+      const sales = o ? o.sales : 0;
+      const roas = a.cost > 0 ? sales / a.cost : null;
+      const ti = targetInfo(o, t);
+      const lvl = !ti.has ? 5 : classify(roas, sales, ti, ti.zeroApplies);
+      return {
+        id: a.id, name: (t && t.name) || a.name || (o && o.name) || '(ไม่พบชื่อ)', adGroup: [...a.groups].join(' | '),
+        group: a.pseudo ? '(กลุ่มโฆษณาที่ไม่มีรายสินค้า)' : (ti.has ? groupOf(o, t) : '(ไม่มีเกณฑ์ในชีตเป้า)'), est: a.est || 0, cost: a.cost, sales, roas, shopeeRoas: a.cost > 0 ? a.gmv / a.cost : null,
+
+        need: ti.need, be: ti.be, tg: ti.tg, mbe: ti.mbe, mtg: ti.mtg, zeroApplies: ti.zeroApplies, gap: ti.need != null && roas != null ? roas - ti.need : null, lvl
+      };
+    });
+    const groups = {};
+    for (const r of rows) {
+      const g = groups[r.group] || (groups[r.group] = { group: r.group, cost: 0, sales: 0, items: 0, bad: 0, cs: 0, cw: 0, aBe: 0, aTg: 0, sw: 0, zs: 0 });
+      g.cost += r.cost; g.sales += r.sales; g.items++;
+      if (r.lvl >= 2 && r.lvl <= 4) g.bad += r.cost;
+
+
+      if (r.sales > 0 && r.mbe != null && r.mtg != null) { g.sw += r.sales; g.aBe += r.sales * r.mbe; g.aTg += r.sales * r.mtg; if (r.zeroApplies) g.zs += r.sales; }
+
+    }
+    const glist = Object.values(groups).map((g) => {
+      g.roas = g.cost > 0 ? g.sales / g.cost : null;
+
+
+      g.be = g.aBe > 0 ? 100 * g.sw / g.aBe : null; g.tg = g.aTg > 0 ? 100 * g.sw / g.aTg : null;
+      const zero = g.sw > 0 && g.zs / g.sw > 0.5;
+      g.lvl = g.sw > 0 ? classify(g.roas, g.sales, { be: g.be, tg: g.tg, need: null, loss: false }, zero) : 5;
+
+      return g;
+    });
+    return { rows, glist };
+  }
+
+  // ---------- แสดงผล ----------
+  function msg(kind, text) { const d = document.createElement('div'); d.className = 'msg ' + kind; d.textContent = text; $('msgs').append(d); }
+  function sortRows(rows, key, dir) {
+    return rows.slice().sort((a, b) => {
+      const x = a[key], y = b[key];
+      if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1;
+      return (typeof x === 'string' ? x.localeCompare(y, 'th') : x - y) * dir;
+    });
+  }
+  function header(tbl, cols, which) {
+    const tr = document.createElement('tr');
+    cols.forEach((c) => {
+      const th = document.createElement('th'); th.textContent = c.t + (state.sort[which][0] === c.k ? (state.sort[which][1] < 0 ? ' ▼' : ' ▲') : '');
+      if (c.r) th.className = 'r';
+      th.onclick = () => { const s = state.sort[which]; state.sort[which] = [c.k, s[0] === c.k ? -s[1] : (c.k === 'name' || c.k === 'group' ? 1 : -1)]; render(); };
+      tr.append(th);
+    });
+    tbl.tHead.replaceChildren(tr);
+  }
+  const pill = (lvl) => '<span class="pill s' + lvl + '">' + esc(sLabel(lvl)) + '</span>';
+
+  let view = null;
+  function render() {
+    view = compute();
+    if (!view) { $('results').classList.add('hidden'); return; }
+    $('results').classList.remove('hidden');
+    const { rows, glist } = view;
+    const orders = state.orders, ads = state.ads;
+    const totalCost = ads.total + ads.missing.reduce((s, r) => s + r.cost, 0);
+    const roasAll = totalCost > 0 ? orders.total / totalCost : null;
+    const rowsCost = rows.reduce((s, r) => s + r.cost, 0) || 1;
+    const share = (f) => rows.filter(f).reduce((s, r) => s + r.cost, 0) / rowsCost * 100;
+    const k = [
+      ['ค่าโฆษณารวม', baht(totalCost)], ['ยอดขาย Order รวม', baht(orders.total)], ['ROAS จริงรวมทั้งร้าน', r1(roasAll)],
+      ['ค่าโฆษณาที่ผ่านเป้า (กำไร ≥ 5%)', r1(share((r) => r.lvl === 0)) + '%'], ['ผ่านที่จุดคุ้มทุน / คุ้มทุนแต่ต่ำกว่าเป้า', r1(share((r) => r.lvl === 6 || r.lvl === 1)) + '%'], ['ไม่คุ้มทุน / ไม่มียอดขาย / ขาดทุน', r1(share((r) => r.lvl >= 2 && r.lvl <= 4)) + '%'],
+      ['สินค้าที่มีโฆษณา', fmtInt(rows.length)]
+    ];
+    $('kpis').innerHTML = k.map(([l, v]) => '<div class="kpi"><span>' + l + '</span><b>' + v + '</b></div>').join('');
+    const byLvl = STATUS.map((s) => ({ s, cost: rows.filter((r) => r.lvl === s.id).reduce((a, r) => a + r.cost, 0) })).filter((x) => x.cost > 0);
+    const tot = byLvl.reduce((a, x) => a + x.cost, 0) || 1;
+    $('statusbar').innerHTML = byLvl.map((x) => '<i title="' + esc(x.s.label) + '" style="width:' + (x.cost / tot * 100) + '%;background:' + x.s.color + '"></i>').join('');
+    $('statuslegend').innerHTML = byLvl.map((x) => '<span><em style="background:' + x.s.color + '"></em>' + esc(x.s.label) + ' ' + baht(x.cost) + ' (' + (x.cost / tot * 100).toFixed(0) + '%)</span>').join('');
+
+    // กราฟรายวัน
+    state.roasAll = roasAll;
+
+    drawDaily(roasAll);
+
+    // กลุ่ม
+
+
+    header($('tbl-groups'), [{ k: 'group', t: 'กลุ่มสินค้า' }, { k: 'items', t: 'สินค้า', r: 1 }, { k: 'cost', t: 'ค่าโฆษณา', r: 1 }, { k: 'sales', t: 'ยอดขาย Order', r: 1 }, { k: 'roas', t: 'ROAS จริง', r: 1 }, { k: 'be', t: 'ROAS เท่าทุน', r: 1 }, { k: 'tg', t: 'ROAS เป้า', r: 1 }, { k: 'bad', t: 'ค่าโฆษณาที่ไม่คุ้มทุน', r: 1 }, { k: 'lvl', t: 'สถานะ' }], 'groups');
+    $('tbl-groups').tBodies[0].innerHTML = sortRows(glist, ...state.sort.groups).map((g) =>
+      '<tr><td class="nm">' + esc(g.group) + '</td><td class="r">' + g.items + '</td><td class="r">' + baht(g.cost) + '</td><td class="r">' + baht(g.sales) +
+      '</td><td class="r">' + r1(g.roas) + '</td><td class="r">' + r1(g.be) + '</td><td class="r">' + r1(g.tg) + '</td><td class="r' + (g.bad > 0 ? ' neg' : '') + '">' + baht(g.bad) + '</td><td>' + pill(g.lvl) + '</td></tr>').join('');
+
+
+    // ตัวกรอง
+    const gsel = $('fgroup'), ssel = $('fstatus');
+    const gv = gsel.value, sv = ssel.value;
+    gsel.innerHTML = '<option value="">ทุกกลุ่มสินค้า</option>' + [...new Set(rows.map((r) => r.group))].sort((a, b) => a.localeCompare(b, 'th')).map((g) => '<option>' + esc(g) + '</option>').join('');
+    ssel.innerHTML = '<option value="">ทุกสถานะ</option>' + STATUS.map((s) => '<option value="' + s.id + '">' + esc(s.label) + '</option>').join('');
+    gsel.value = gv; ssel.value = sv;
+    renderMissing();
+    renderItems();
+  }
+
+  function filtered() {
+    const q = $('q').value.trim().toLowerCase(), g = $('fgroup').value, s = $('fstatus').value;
+    return view.rows.filter((r) => (!g || r.group === g) && (s === '' || String(r.lvl) === s) && (!q || r.name.toLowerCase().includes(q) || r.id.includes(q)));
+  }
+  function renderMissing() {
+    const m = state.ads.missing, card = $('missingcard');
+    if (!m.length) { card.classList.add('hidden'); return; }
+    card.classList.remove('hidden');
+    $('tbl-missing').tBodies[0].innerHTML = m.slice().sort((a, b) => b.cost - a.cost).map((r) => {
+      const ids = String(r.member_items || '').split('|').filter(Boolean);
+      const withSales = ids.filter((id) => state.orders.byItem[id] && state.orders.byItem[id].sales > 0).length;
+      return '<tr><td class="nm">' + esc(r.campaign_name) + '</td><td class="r">' + baht(r.cost) + '</td><td class="r">' + ids.length + '</td><td class="r">' + withSales + '</td></tr>';
+    }).join('');
+  }
+
+  function renderItems() {
+    if (!view) return;
+    const rows = sortRows(filtered(), ...state.sort.items);
+    header($('tbl-items'), [{ k: 'name', t: 'สินค้า' }, { k: 'cost', t: 'ค่าโฆษณา', r: 1 }, { k: 'sales', t: 'ยอดขาย Order', r: 1 }, { k: 'roas', t: 'ROAS จริง', r: 1 }, { k: 'need', t: 'ROAS ที่ใช้ตัดสิน', r: 1 }, { k: 'gap', t: 'ส่วนต่าง', r: 1 }, { k: 'shopeeRoas', t: 'ROAS ที่ Shopee รายงาน', r: 1 }, { k: 'lvl', t: 'สถานะ' }], 'items');
+    $('tbl-items').tBodies[0].innerHTML = rows.map((r) =>
+      '<tr><td class="nm">' + esc(r.name) + (r.est > 0 ? ' <span class="pill s5">ประมาณ ' + baht(r.est) + '</span>' : '') + '<small>' + esc(r.group) + ' · ' + esc(r.adGroup) + ' · ' + esc(r.id) + '</small></td><td class="r">' + baht(r.cost) + '</td><td class="r">' + baht(r.sales) + '</td>' + '<td class="r">' + r1(r.roas) +
+      '</td><td class="r">' + r1(r.need) + '</td><td class="r ' + (r.gap == null ? '' : r.gap < 0 ? 'neg' : 'pos') + '">' + (r.gap == null ? '—' : (r.gap > 0 ? '+' : '') + r.gap.toFixed(1)) + '</td><td class="r">' + r1(r.shopeeRoas) + '</td><td>' + pill(r.lvl) + '</td></tr>').join('');
+    $('items-count').textContent = 'แสดง ' + fmtInt(rows.length) + ' จาก ' + fmtInt(view.rows.length) + ' สินค้า · ค่าโฆษณาที่แสดง ' + baht(rows.reduce((s, r) => s + r.cost, 0));
+  }
+
+  function drawDaily(overall) {
+    const el = $('daily');
+    const d = (state.ads.daily || []).slice().sort((a, b) => (a.date < b.date ? -1 : 1));
+    if (!d.length) { el.innerHTML = '<p class="note">ไฟล์ Ads นี้ไม่มีข้อมูลรายวันทั้งร้าน (ต้องมีหน้ารายการกลุ่มโฆษณาอยู่ในไฟล์)</p>'; return; }
+    const rows = d.map((x) => { const sales = state.orders.byDay[x.date] || 0; return { date: x.date, cost: x.cost, sales, roas: x.cost > 0 ? sales / x.cost : null }; });
+    const W = Math.max(320, el.clientWidth || 800), H = 260, m = { t: 30, r: 8, b: 26, l: 48 };
+    const maxC = Math.max(...rows.map((r) => r.cost)) * 1.12 || 1;
+    const bw = (W - m.l - m.r) / rows.length, y = (v) => H - m.b - (v / maxC) * (H - m.t - m.b);
+    let s = '<svg viewBox="0 0 ' + W + ' ' + H + '">';
+    for (let i = 0; i <= 4; i++) { const v = maxC * i / 4; s += '<line class="grid" x1="' + m.l + '" x2="' + (W - m.r) + '" y1="' + y(v) + '" y2="' + y(v) + '"/><text x="' + (m.l - 5) + '" y="' + (y(v) + 4) + '" text-anchor="end">฿' + fmtInt(v) + '</text>'; }
+    rows.forEach((r, i) => {
+      const bad = r.roas != null && overall != null && r.roas < overall * 0.85;
+      s += '<rect x="' + (m.l + i * bw + bw * 0.15) + '" y="' + y(r.cost) + '" width="' + bw * 0.7 + '" height="' + (H - m.b - y(r.cost)) + '" rx="2" fill="' + (bad ? 'var(--bad)' : 'var(--info)') + '"><title>' + r.date + ' ค่าโฆษณา ' + baht(r.cost) + ' ยอดขาย ' + baht(r.sales) + ' ROAS ' + r1(r.roas) + '</title></rect>';
+      if (rows.length <= 16 || i % Math.ceil(rows.length / 16) === 0) s += '<text x="' + (m.l + i * bw + bw / 2) + '" y="' + (H - 9) + '" text-anchor="middle">' + (+r.date.slice(8)) + '/' + (+r.date.slice(5, 7)) + '</text>';
+      if (rows.length <= 16) s += '<text class="v" x="' + (m.l + i * bw + bw / 2) + '" y="' + (y(r.cost) - 4) + '" text-anchor="middle">' + r1(r.roas) + '</text>';
+    });
+    s += '<text x="' + m.l + '" y="14">แท่ง = ค่าโฆษณา' + (rows.length <= 16 ? ' · ตัวเลข = ROAS จริง (ยอดขาย Order ÷ ค่าโฆษณา)' : '') + ' · แท่งแดง = ROAS ต่ำกว่าค่าเฉลี่ยทั้งช่วงเกิน 15%</text></svg>';
+    el.innerHTML = s;
+  }
+
+  function csv() {
+    const rows = sortRows(filtered(), ...state.sort.items);
+    const head = ['item_id', 'ชื่อสินค้า', 'กลุ่มสินค้า', 'กลุ่มโฆษณา', 'ค่าโฆษณา', 'ยอดขาย Order', 'ROAS จริง', 'ROAS ที่ต้องได้', 'ส่วนต่าง', 'ROAS ที่ Shopee รายงาน', 'สถานะ'];
+    const e = (v) => { v = v == null ? '' : String(v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+    const body = rows.map((r) => [r.id, r.name, r.group, r.adGroup, r.cost.toFixed(2), r.sales.toFixed(2), r.roas == null ? '' : r.roas.toFixed(2), r.need == null ? '' : r.need, r.gap == null ? '' : r.gap.toFixed(2), r.shopeeRoas == null ? '' : r.shopeeRoas.toFixed(2), sLabel(r.lvl)].map(e).join(','));
+    const url = URL.createObjectURL(new Blob(['﻿' + [head.join(',')].concat(body).join('\r\n')], { type: 'text/csv;charset=utf-8' }));
+    const a = document.createElement('a'); a.href = url; a.download = 'roas_check.csv'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 4000);
+  }
+
+  // ---------- ตรวจความสอดคล้อง ----------
+  function checks() {
+    $('msgs').replaceChildren();
+    const { orders, ads, targets } = state;
+    if (ads && ads.others > 0) msg('info', 'ไฟล์ Ads มี ' + (ads.others + 1) + ' ช่วงวันที่ปนกัน ใช้ช่วง ' + ads.period.from + ' ถึง ' + ads.period.to + ' (เลือกช่วงที่ตรงกับไฟล์ Order ให้อัตโนมัติ เปลี่ยนได้ที่ตัวเลือกด้านบน) ไม่นำช่วงอื่นมารวมเพื่อไม่ให้นับซ้ำ');
+    if (orders && ads && ads.period) {
+      const sh = (s, n) => new Date(Date.parse(s) + n * 86400000).toISOString().slice(0, 10);
+      const info = 'Ads ' + ads.period.from + ' ถึง ' + ads.period.to + ' · Order ' + orders.from + ' ถึง ' + orders.to;
+      if (orders.from > sh(ads.period.from, 1) || orders.to < sh(ads.period.to, -1))
+        msg('warn', 'ไฟล์ Order ไม่ครอบคลุมช่วงของ Ads (' + info + ') ROAS ที่คำนวณได้ไม่ถูกต้อง ต้องใช้ไฟล์ Order ช่วงเดียวกับ Ads');
+      else if (orders.from < sh(ads.period.from, -3) || orders.to > sh(ads.period.to, 3))
+        msg('warn', 'ไฟล์ Order กว้างกว่าช่วงของ Ads (' + info + ') ยอดขายส่วนเกินจะทำให้ ROAS สูงเกินจริง');
+    }
+
+
+    if (orders && orders.bySku && state.refPrices) {
+      const ds = Object.entries(orders.bySku).filter(([k, v]) => state.refPrices[k] && v.units >= 3).map(([k, v]) => [k, (v.sales / v.units) / state.refPrices[k] - 1, v.sales])
+        .filter((x) => Math.abs(x[1]) > 0.1).sort((x, y) => y[2] - x[2]);
+      if (ds.length) msg('warn', 'ราคาขายต่อชุดของ ' + ds.length + ' SKU ต่างจากตอนสร้างไฟล์เป้าเกิน 10% (เช่น ' + ds.slice(0, 4).map((x) => x[0] + ' ' + (x[1] > 0 ? '+' : '') + (x[1] * 100).toFixed(0) + '%').join(', ') + ') เกณฑ์ ROAS อาจไม่ตรงกับราคาปัจจุบัน ให้ผู้จัดการสร้างไฟล์เป้าใหม่');
+    }
+
+    if (ads && ads.missing.length) msg('warn', 'มี ' + ads.missing.length + ' กลุ่มโฆษณาที่มีค่าโฆษณาแต่ไม่มีข้อมูลรายสินค้า (ยังไม่ได้วนอ่านกลุ่ม) รวม ' + baht(ads.missing.reduce((s, r) => s + r.cost, 0)) + ': ' + ads.missing.map((r) => r.campaign_name + ' ' + baht(r.cost)).join(', '));
+  }
+
+
+  function syncTargetButtons() {}
+
+  function refresh() { if (state.ordersRaw) applyOrderOption(); syncTargetButtons(); render(); checks(); }
+
+  // ---------- เป้า ROAS : Google Sheet / JSON ----------
+  function setTargets(map, label) {
+    state.targets = map; $('st-targets').textContent = label + ' (' + fmtInt(Object.keys(map).length) + ' สินค้า' + (state.targetsInfo ? ' · ' + state.targetsInfo : '') + ')'; $('btn-clear-targets').classList.remove('hidden'); $('st-targets').className = 'st ok'; refresh();
+  }
+  // ---------- ผูกอีเวนต์ ----------
+  function wire(dropId, inputId, handler) {
+    const drop = $(dropId), inp = $(inputId);
+    inp.onchange = () => inp.files.length && handler([...inp.files]);
+    ['dragover', 'dragenter'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('over'); }));
+    ['dragleave', 'drop'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
+    drop.addEventListener('drop', (e) => e.dataTransfer.files.length && handler([...e.dataTransfer.files]));
+  }
+  const fail = (id, e) => { $(id).textContent = 'ผิดพลาด: ' + e.message; $(id).className = 'st'; msg('bad', e.message); };
+  wire('drop-orders', 'f-orders', async (fs) => {
+    $('st-orders').textContent = 'กำลังอ่าน ' + fs[0].name + ' …';
+    try { state.ordersRaw = await loadOrders(fs[0]); $('st-orders').dataset.file = fs[0].name; applyOrderOption(); if (state.adsRaw && !state.periodKeyPinned) { state.periodKey = null; applyPeriod(); } $('st-orders').className = 'st ok'; refresh(); }
+    catch (e) { state.orders = null; state.ordersRaw = null; $('orderbreak').textContent = ''; fail('st-orders', e); }
+  });
+  wire('drop-ads', 'f-ads', async (fs) => {
+    $('st-ads').textContent = 'กำลังอ่าน …';
+    try { state.adsRaw = await loadAds(fs); state.adsFiles = fs.map((f) => f.name).join(', '); state.periodKey = null; applyPeriod(); refresh(); }
+    catch (e) { state.adsRaw = null; state.ads = null; $('periodrow').classList.add('hidden'); fail('st-ads', e); }
+  });
+  $('f-targets').onchange = async () => {
+    const f = $('f-targets').files[0]; if (!f) return;
+    try {
+      const j = JSON.parse(await readText(f));
+      if (!j || !Array.isArray(j.items)) throw new Error('ไฟล์เป้า ROAS ไม่ถูกต้อง');
+      try { localStorage.setItem('roas-targets', JSON.stringify(j)); } catch (e) {}
+      setTargets(parseTargets(j), 'ไฟล์ ' + f.name);
+    } catch (e) { fail('st-targets', e); }
+  };
+  ['q', 'fgroup', 'fstatus'].forEach((id) => { $(id).oninput = renderItems; $(id).onchange = renderItems; });
+  try { const sv = localStorage.getItem('roas-include-transit'); if (sv !== null) $('chk-transit').checked = sv === '1'; } catch (e) {}
+  $('chk-transit').onchange = () => { try { localStorage.setItem('roas-include-transit', $('chk-transit').checked ? '1' : '0'); } catch (e) {} applyOrderOption(); render(); checks(); };
+  $('fperiod').onchange = () => { state.periodKey = $('fperiod').value; state.periodKeyPinned = true; applyPeriod(); refresh(); };
+  $('btn-csv').onclick = () => view && csv();
+  try { state.estimateMissing = localStorage.getItem('roas-estimate-missing') === '1'; } catch (e) {}
+  $('chk-estimate').checked = state.estimateMissing;
+  try { const z = localStorage.getItem('roas-zero-ok'); if (z !== null) state.zeroOK = z === '1'; } catch (e) {}
+  $('chk-zero').checked = state.zeroOK;
+  $('chk-zero').onchange = () => { state.zeroOK = $('chk-zero').checked; try { localStorage.setItem('roas-zero-ok', state.zeroOK ? '1' : '0'); } catch (e) {} render(); };
+  $('chk-estimate').onchange = () => { state.estimateMissing = $('chk-estimate').checked; try { localStorage.setItem('roas-estimate-missing', state.estimateMissing ? '1' : '0'); } catch (e) {} render(); };
+
+
+  $('btn-clear-targets').onclick = () => { try { localStorage.removeItem('roas-targets'); } catch (e) {} state.targets = null; $('btn-clear-targets').classList.add('hidden'); $('st-targets').className = 'st'; $('st-targets').textContent = 'ล้างแล้ว อัปโหลดไฟล์เป้าใหม่'; refresh(); };
+  window.addEventListener('resize', () => { if (view) drawDaily(state.roasAll); });
+
+  // เป้าที่เคยอัปโหลดไว้ (ถ้ามี)
+  try { const s = localStorage.getItem('roas-targets'); if (s) { state.targets = parseTargets(JSON.parse(s)); $('btn-clear-targets').classList.remove('hidden'); $('st-targets').textContent = 'ใช้เป้าที่อัปโหลดไว้ครั้งก่อน (' + fmtInt(Object.keys(state.targets).length) + ' สินค้า' + (state.targetsInfo ? ' · ' + state.targetsInfo : '') + ') อัปโหลดใหม่เพื่อแทนที่'; $('st-targets').className = 'st ok'; } else $('st-targets').textContent = 'ยังไม่ได้โหลด อัปโหลดไฟล์เป้า'; } catch (e) { $('st-targets').textContent = 'ยังไม่ได้โหลด อัปโหลดไฟล์เป้า'; }
+})();
+</script>
+</body>
+</html>
