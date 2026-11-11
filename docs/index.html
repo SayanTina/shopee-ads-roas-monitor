@@ -554,7 +554,8 @@ footer { color: var(--muted); font-size: 12px; }
     sel.innerHTML = state.adsRaw.periods.map((p) => '<option value="' + pkey(p) + '">' + p.from + ' ถึง ' + p.to + '</option>').join('');
     sel.value = state.periodKey;
     $('periodrow').classList.toggle('hidden', state.adsRaw.periods.length < 2);
-    state.ads = buildAds(state.adsRaw, wp);
+    state.adsBase = buildAds(state.adsRaw, wp);
+    state.ads = state.adsBase;
     $('st-ads').textContent = state.adsFiles + ' · ' + wp.from + ' ถึง ' + wp.to + ' · ' + fmtInt(Object.keys(state.ads.items).length) + ' สินค้า';
     $('st-ads').className = 'st ok';
   }
@@ -596,13 +597,14 @@ footer { color: var(--muted); font-size: 12px; }
     return 2;
   }
 
-  function adsItemsWithEstimate() {
+  function adsItemsWithEstimate(ads, salesOf) {
+    ads = ads || state.ads; salesOf = salesOf || ((id) => (state.orders.byItem[id] ? state.orders.byItem[id].sales : 0));
     const items = {};
-    for (const [k, a] of Object.entries(state.ads.items)) items[k] = Object.assign({}, a, { est: 0 });
+    for (const [k, a] of Object.entries(ads.items)) items[k] = Object.assign({}, a, { est: 0 });
     if (state.estimateMissing) {
-      for (const m of state.ads.missing) {
+      for (const m of ads.missing) {
         const members = String(m.member_items || '').split('|').filter(Boolean);
-        const w = members.map((id) => (state.orders.byItem[id] ? state.orders.byItem[id].sales : 0));
+        const w = members.map((id) => salesOf(id));
         const tot = w.reduce((s, x) => s + x, 0);
         if (tot > 0) {
           members.forEach((id, i) => {
@@ -623,22 +625,93 @@ footer { color: var(--muted); font-size: 12px; }
 
 
   // เกณฑ์รายสินค้า: ถ้าสินค้าขายในหลายช่วงเกณฑ์ รวมเป็นเกณฑ์ผสมถ่วงน้ำหนักด้วยยอดขายของแต่ละช่วง (ตรงกับงบโฆษณาสูงสุดรวมของทั้งช่วง)
+  function entryInfo(e) {
+    const be = e.roas_be == null ? null : e.roas_be, tg = e.roas_target == null ? null : e.roas_target;
+    const zeroApplies = state.zeroOK !== false && !!e.be_ok;
+    return { has: true, be, tg, need: zeroApplies ? be : tg, loss: !!e.loss, zeroApplies, mbe: e.m_be == null ? null : e.m_be, mtg: e.m_tg == null ? null : e.m_tg, blend: 1 };
+  }
   function targetInfo(o, t, id) {
     if (!t) return { has: false };
     const vs = state.versions || [];
     const parts = [];
     if (o && o.vs) for (const [k, s] of Object.entries(o.vs)) { if (k === 'x' || !(s > 0)) continue; const e = vs[+k] && vs[+k].items[id]; if (e) parts.push({ s, e }); }
-    if (parts.length <= 1) {
-      const e = parts.length ? parts[0].e : t;
-      const be = e.roas_be == null ? null : e.roas_be, tg = e.roas_target == null ? null : e.roas_target;
-      const zeroApplies = state.zeroOK !== false && !!e.be_ok;
-      return { has: true, be, tg, need: zeroApplies ? be : tg, loss: !!e.loss, zeroApplies, mbe: e.m_be == null ? null : e.m_be, mtg: e.m_tg == null ? null : e.m_tg, blend: 1 };
-    }
+    if (parts.length <= 1) return entryInfo(parts.length ? parts[0].e : t);
     let sw = 0, aBe = 0, aTg = 0, zs = 0, allLoss = true;
     for (const { s, e } of parts) { if (e.m_be == null || e.m_tg == null) continue; sw += s; aBe += s * e.m_be; aTg += s * e.m_tg; if (e.be_ok) zs += s; if (!e.loss) allLoss = false; }
     if (!(sw > 0)) return { has: true, be: null, tg: null, need: null, loss: false, zeroApplies: false, mbe: null, mtg: null, blend: parts.length };
     const be = aBe > 0 ? 100 * sw / aBe : null, tg = aTg > 0 ? 100 * sw / aTg : null, zeroApplies = state.zeroOK !== false && zs / sw > 0.5;
     return { has: true, be, tg, need: zeroApplies ? be : tg, loss: allLoss, zeroApplies, mbe: aBe / sw, mtg: aTg / sw, blend: parts.length };
+  }
+
+  // ---------- โหมดแยกช่วง: ใช้ค่าโฆษณารายสินค้าของ Ads แต่ละช่วงให้ตรงกับช่วงเกณฑ์ ----------
+  function planSegments() {
+    const vs = state.versions || [], o = state.orders, raw = state.adsRaw;
+    if (!o || !raw || !raw.periods || vs.length < 2 || state.periodKeyPinned) return null;
+    const segs = [], missing = [];
+    vs.forEach((v, vi) => {
+      const f = v.from && v.from > o.from ? v.from : o.from, t = v.to && v.to < o.to ? v.to : o.to;
+      if (f > t) return;
+      let best = null;
+      for (const p of raw.periods) {
+        const df = Math.abs(dayNum(p.from) - dayNum(f)), dt = Math.abs(dayNum(p.to) - dayNum(t));
+        if (df <= 1 && dt <= 1 && (!best || df + dt < best.d)) best = { p, d: df + dt };
+      }
+      if (best) segs.push({ vi, from: f, to: t, period: best.p }); else missing.push({ vi, from: f, to: t });
+    });
+    if (segs.length + missing.length < 2) return null;
+    return { segs, missing };
+  }
+  function replanSegments() {
+    if (!state.adsBase) return;
+    const plan = planSegments();
+    state.segMissing = plan && plan.missing.length ? plan.missing : null;
+    if (!plan || plan.missing.length) { state.ads = state.adsBase; return; }
+    const items = {}, missing = [], daily = [];
+    let total = 0, campTotal = 0;
+    for (const sg of plan.segs) {
+      sg.ads = buildAds(state.adsRaw, sg.period);
+      for (const [id, a] of Object.entries(sg.ads.items)) {
+        const it = items[id] || (items[id] = { id, name: a.name, cost: 0, gmv: 0, clicks: 0, groups: new Set() });
+        it.cost += a.cost; it.gmv += a.gmv; it.clicks += a.clicks; a.groups.forEach((g) => it.groups.add(g));
+      }
+      missing.push(...sg.ads.missing); daily.push(...sg.ads.daily); total += sg.ads.total; campTotal += sg.ads.campTotal;
+    }
+    const from = plan.segs.map((s) => s.from).sort()[0], to = plan.segs.map((s) => s.to).sort().slice(-1)[0];
+    state.ads = { items, period: { from, to }, others: 0, daily, missing, campTotal, total, segs: plan.segs };
+    $('st-ads').textContent = state.adsFiles + ' · แยกตามช่วงเกณฑ์ ' + plan.segs.length + ' ช่วง (' + plan.segs.map((s) => s.period.from + '–' + s.period.to).join(', ') + ')';
+    $('st-ads').className = 'st ok';
+    $('periodrow').classList.add('hidden');
+  }
+  function segRows() {
+    const o = state.orders, vs = state.versions, per = new Map();
+    for (const sg of state.ads.segs) {
+      const salesOf = (id) => { const it = o.byItem[id]; return (it && it.vs[sg.vi]) || 0; };
+      const items = adsItemsWithEstimate(sg.ads, salesOf);
+      for (const a of Object.values(items)) {
+        const it = o.byItem[a.id], sales = salesOf(a.id), e = vs[sg.vi].items[a.id], ti = e ? entryInfo(e) : { has: false };
+        const roas = a.cost > 0 ? sales / a.cost : null;
+        const row = {
+          id: a.id, name: (e && e.name) || (state.targets[a.id] && state.targets[a.id].name) || a.name || (it && it.name) || '(ไม่พบชื่อ)', adGroup: [...a.groups].join(' | '),
+          group: a.pseudo ? '(กลุ่มโฆษณาที่ไม่มีรายสินค้า)' : (ti.has ? ((e && e.group) || '(ไม่ระบุกลุ่ม)') : '(ไม่มีเกณฑ์ในชีตเป้า)'), est: a.est || 0, cost: a.cost, gmv: a.gmv, sales,
+          roas, shopeeRoas: a.cost > 0 ? a.gmv / a.cost : null, need: ti.need, be: ti.be, tg: ti.tg, mbe: ti.mbe, mtg: ti.mtg, zeroApplies: ti.zeroApplies, blend: 1,
+          gap: ti.need != null && roas != null ? roas - ti.need : null, lvl: !ti.has ? 5 : classify(roas, sales, ti, ti.zeroApplies), segLabel: verLabel(sg.vi), ti
+        };
+        if (!per.has(a.id)) per.set(a.id, []);
+        per.get(a.id).push(row);
+      }
+    }
+    const out = [];
+    for (const list of per.values()) {
+      const same = list.length > 1 && list.every((r) => r.ti.has === list[0].ti.has && r.be === list[0].be && r.tg === list[0].tg && r.zeroApplies === list[0].zeroApplies && r.ti.loss === list[0].ti.loss);
+      if (!same) { out.push(...list); continue; }
+      const m = Object.assign({}, list[0]);
+      m.cost = list.reduce((s, r) => s + r.cost, 0); m.sales = list.reduce((s, r) => s + r.sales, 0); m.est = list.reduce((s, r) => s + r.est, 0); m.gmv = list.reduce((s, r) => s + r.gmv, 0);
+      m.roas = m.cost > 0 ? m.sales / m.cost : null; m.shopeeRoas = m.cost > 0 ? m.gmv / m.cost : null;
+      m.gap = m.need != null && m.roas != null ? m.roas - m.need : null;
+      m.lvl = !m.ti.has ? 5 : classify(m.roas, m.sales, m.ti, m.zeroApplies); m.segLabel = '';
+      out.push(m);
+    }
+    return out;
   }
   function groupOf(o, t) { return (t && t.group) || '(ไม่ระบุกลุ่ม)'; }
 
@@ -647,7 +720,7 @@ footer { color: var(--muted); font-size: 12px; }
     const { orders, ads, targets } = state;
     if (!orders || !ads || !targets) return null;
     const estItems = adsItemsWithEstimate();
-    const rows = Object.values(estItems).map((a) => {
+    const rows = (state.ads.segs ? segRows() : null) || Object.values(estItems).map((a) => {
       const t = targets[a.id], o = orders.byItem[a.id];
       const sales = o ? o.sales : 0;
       const roas = a.cost > 0 ? sales / a.cost : null;
@@ -655,15 +728,15 @@ footer { color: var(--muted); font-size: 12px; }
       const lvl = !ti.has ? 5 : classify(roas, sales, ti, ti.zeroApplies);
       return {
         id: a.id, name: (t && t.name) || a.name || (o && o.name) || '(ไม่พบชื่อ)', adGroup: [...a.groups].join(' | '),
-        group: a.pseudo ? '(กลุ่มโฆษณาที่ไม่มีรายสินค้า)' : (ti.has ? groupOf(o, t) : '(ไม่มีเกณฑ์ในชีตเป้า)'), est: a.est || 0, cost: a.cost, sales, roas, shopeeRoas: a.cost > 0 ? a.gmv / a.cost : null,
+        group: a.pseudo ? '(กลุ่มโฆษณาที่ไม่มีรายสินค้า)' : (ti.has ? groupOf(o, t) : '(ไม่มีเกณฑ์ในชีตเป้า)'), est: a.est || 0, cost: a.cost, gmv: a.gmv, segLabel: '', sales, roas, shopeeRoas: a.cost > 0 ? a.gmv / a.cost : null,
 
         need: ti.need, be: ti.be, tg: ti.tg, mbe: ti.mbe, mtg: ti.mtg, zeroApplies: ti.zeroApplies, blend: ti.blend || 1, gap: ti.need != null && roas != null ? roas - ti.need : null, lvl
       };
     });
     const groups = {};
     for (const r of rows) {
-      const g = groups[r.group] || (groups[r.group] = { group: r.group, cost: 0, sales: 0, items: 0, bad: 0, cs: 0, cw: 0, aBe: 0, aTg: 0, sw: 0, zs: 0 });
-      g.cost += r.cost; g.sales += r.sales; g.items++;
+      const g = groups[r.group] || (groups[r.group] = { group: r.group, cost: 0, sales: 0, items: 0, ids: new Set(), bad: 0, cs: 0, cw: 0, aBe: 0, aTg: 0, sw: 0, zs: 0 });
+      g.cost += r.cost; g.sales += r.sales; g.ids.add(r.id); g.items = g.ids.size;
       if (r.lvl >= 2 && r.lvl <= 4) g.bad += r.cost;
 
 
@@ -773,7 +846,7 @@ footer { color: var(--muted); font-size: 12px; }
     const rows = sortRows(filtered(), ...state.sort.items);
     header($('tbl-items'), [{ k: 'name', t: 'สินค้า' }, { k: 'cost', t: 'ค่าโฆษณา', r: 1 }, { k: 'sales', t: 'ยอดขาย Order', r: 1 }, { k: 'roas', t: 'ROAS จริง', r: 1 }, { k: 'need', t: 'ROAS ที่ใช้ตัดสิน', r: 1 }, { k: 'gap', t: 'ส่วนต่าง', r: 1 }, { k: 'shopeeRoas', t: 'ROAS ที่ Shopee รายงาน', r: 1 }, { k: 'lvl', t: 'สถานะ' }], 'items');
     $('tbl-items').tBodies[0].innerHTML = rows.map((r) =>
-      '<tr><td class="nm">' + esc(r.name) + (r.est > 0 ? ' <span class="pill s5">ประมาณ ' + baht(r.est) + '</span>' : '') + (r.blend > 1 ? ' <span class="pill s6">เกณฑ์ผสม ' + r.blend + ' ช่วง</span>' : '') + '<small>' + esc(r.group) + ' · ' + esc(r.adGroup) + ' · ' + esc(r.id) + '</small></td><td class="r">' + baht(r.cost) + '</td><td class="r">' + baht(r.sales) + '</td>' + '<td class="r">' + r1(r.roas) +
+      '<tr><td class="nm">' + esc(r.name) + (r.est > 0 ? ' <span class="pill s5">ประมาณ ' + baht(r.est) + '</span>' : '') + (r.blend > 1 ? ' <span class="pill s6">เกณฑ์ผสม ' + r.blend + ' ช่วง</span>' : '') + (r.segLabel ? ' <span class="pill s6">ช่วง ' + esc(r.segLabel) + '</span>' : '') + '<small>' + esc(r.group) + ' · ' + esc(r.adGroup) + ' · ' + esc(r.id) + '</small></td><td class="r">' + baht(r.cost) + '</td><td class="r">' + baht(r.sales) + '</td>' + '<td class="r">' + r1(r.roas) +
       '</td><td class="r">' + r1(r.need) + '</td><td class="r ' + (r.gap == null ? '' : r.gap < 0 ? 'neg' : 'pos') + '">' + (r.gap == null ? '—' : (r.gap > 0 ? '+' : '') + r.gap.toFixed(1)) + '</td><td class="r">' + r1(r.shopeeRoas) + '</td><td>' + pill(r.lvl) + '</td></tr>').join('');
     $('items-count').textContent = 'แสดง ' + fmtInt(rows.length) + ' จาก ' + fmtInt(view.rows.length) + ' สินค้า · ค่าโฆษณาที่แสดง ' + baht(rows.reduce((s, r) => s + r.cost, 0));
   }
@@ -846,9 +919,9 @@ footer { color: var(--muted); font-size: 12px; }
 
   function csv() {
     const rows = sortRows(filtered(), ...state.sort.items);
-    const head = ['item_id', 'ชื่อสินค้า', 'กลุ่มสินค้า', 'กลุ่มโฆษณา', 'ค่าโฆษณา', 'ยอดขาย Order', 'ROAS จริง', 'ROAS ที่ต้องได้', 'ส่วนต่าง', 'ROAS ที่ Shopee รายงาน', 'สถานะ'];
+    const head = ['item_id', 'ชื่อสินค้า', 'กลุ่มสินค้า', 'กลุ่มโฆษณา', 'ค่าโฆษณา', 'ยอดขาย Order', 'ROAS จริง', 'ROAS ที่ต้องได้', 'ส่วนต่าง', 'ROAS ที่ Shopee รายงาน', 'ช่วงเกณฑ์', 'สถานะ'];
     const e = (v) => { v = v == null ? '' : String(v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
-    const body = rows.map((r) => [r.id, r.name, r.group, r.adGroup, r.cost.toFixed(2), r.sales.toFixed(2), r.roas == null ? '' : r.roas.toFixed(2), r.need == null ? '' : r.need, r.gap == null ? '' : r.gap.toFixed(2), r.shopeeRoas == null ? '' : r.shopeeRoas.toFixed(2), sLabel(r.lvl)].map(e).join(','));
+    const body = rows.map((r) => [r.id, r.name, r.group, r.adGroup, r.cost.toFixed(2), r.sales.toFixed(2), r.roas == null ? '' : r.roas.toFixed(2), r.need == null ? '' : r.need, r.gap == null ? '' : r.gap.toFixed(2), r.shopeeRoas == null ? '' : r.shopeeRoas.toFixed(2), r.segLabel || '', sLabel(r.lvl)].map(e).join(','));
     const url = URL.createObjectURL(new Blob(['﻿' + [head.join(',')].concat(body).join('\r\n')], { type: 'text/csv;charset=utf-8' }));
     const a = document.createElement('a'); a.href = url; a.download = 'roas_check.csv'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 4000);
   }
@@ -868,6 +941,8 @@ footer { color: var(--muted); font-size: 12px; }
     }
 
 
+    if (ads && ads.segs) msg('info', 'แยกแถวสินค้าตามช่วงเกณฑ์ ' + ads.segs.length + ' ช่วง ใช้ค่าโฆษณารายสินค้าของ Ads แต่ละช่วงเทียบกับเกณฑ์ของช่วงนั้นโดยตรง สินค้าที่เกณฑ์ไม่ต่างกันระหว่างช่วงรวมเป็นแถวเดียว');
+    if (state.segMissing && ads && !ads.segs) msg('warn', 'ไฟล์ Ads ไม่มีช่วงที่ตรงกับเกณฑ์ช่วง ' + state.segMissing.map((s) => s.from + ' ถึง ' + s.to).join(', ') + ' จึงใช้ Ads ช่วงเดียว สินค้าที่ขายคร่อมหลายช่วงเกณฑ์ใช้เกณฑ์ผสม ถ้าต้องการแยกแถว ให้ดึง Ads แยกตามช่วงเกณฑ์ด้วย extension (ช่วงละ 1 ครั้ง)');
     if (orders && orders.bySkuV && state.versions) {
       const ds = [];
       state.versions.forEach((v, i) => {
@@ -886,7 +961,7 @@ footer { color: var(--muted); font-size: 12px; }
 
   function syncTargetButtons() {}
 
-  function refresh() { if (state.ordersRaw) applyOrderOption(); syncTargetButtons(); render(); checks(); }
+  function refresh() { if (state.ordersRaw) applyOrderOption(); replanSegments(); syncTargetButtons(); render(); checks(); }
 
   // ---------- เป้า ROAS : Google Sheet / JSON ----------
   function setTargets(map, label) {
