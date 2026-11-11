@@ -123,6 +123,17 @@ footer { color: var(--muted); font-size: 12px; }
       <div class="chart" id="daily"></div>
     </div>
 
+    <div class="card" id="vercard">
+      <h2>เกณฑ์ ROAS ตามช่วงเวลา</h2>
+      <p class="note">แต่ละช่วงใช้เกณฑ์ของเวอร์ชันที่มีผลในวันที่สั่งซื้อ ROAS ที่ต้องได้ของร้านคำนวณจากสินค้าที่ขายได้ในช่วงนั้น (ถ่วงน้ำหนักด้วยยอดขาย) เทียบกับ ROAS จริง = ยอดขาย Order ÷ ค่าโฆษณาทั้งร้านของช่วงนั้น</p>
+      <div class="tw"><table id="tbl-seg"><thead></thead><tbody></tbody></table></div>
+      <details style="margin-top:10px"><summary style="cursor:pointer">ดูรายวัน</summary>
+        <div class="tw" style="max-height:60vh;margin-top:8px"><table id="tbl-day"><thead></thead><tbody></tbody></table></div>
+        <p class="note" id="day-note" style="margin-top:6px"></p>
+      </details>
+    </div>
+
+
     <div class="card">
       <h2>ตามกลุ่มสินค้า</h2>
       <div class="tw"><table id="tbl-groups"><thead></thead><tbody></tbody></table></div>
@@ -435,17 +446,38 @@ footer { color: var(--muted); font-size: 12px; }
 
 
 
+  // เวอร์ชันของเกณฑ์ที่มีผลในวันนั้น (null = ไม่มีเวอร์ชันครอบคลุมวัน)
+  function verIdx(day) {
+    const vs = state.versions || [];
+    if (!day) { for (let i = vs.length - 1; i >= 0; i--) if (!vs[i].to) return i; return vs.length ? vs.length - 1 : null; }
+    for (let i = 0; i < vs.length; i++) if ((!vs[i].from || vs[i].from <= day) && (!vs[i].to || day <= vs[i].to)) return i;
+    return null;
+  }
   function effectiveOrders(raw, includeTransit) {
-    const byItem = {}, byDay = {}, bySku = {}; let total = 0, lines = 0;
+    const vs = state.versions || [];
+    const byItem = {}, byDay = {}, bySku = {}, bySkuV = vs.map(() => ({})), dayAgg = {}; let total = 0, lines = 0;
     for (const l of raw.L) {
       if (!(l.cls === 'done' || includeTransit)) continue;
       if (l.day) byDay[l.day] = (byDay[l.day] || 0) + l.rev;
       total += l.rev;
-      const it = byItem[l.id] || (byItem[l.id] = { sales: 0, units: 0, name: (raw.byItem[l.id] && raw.byItem[l.id].name) || '' });
-      if (l.rev > 0) { it.sales += l.rev; it.units += l.q; if (l.sku) { const k = bySku[l.sku] || (bySku[l.sku] = { sales: 0, units: 0 }); k.sales += l.rev; k.units += l.q; } }
+      const it = byItem[l.id] || (byItem[l.id] = { sales: 0, units: 0, name: (raw.byItem[l.id] && raw.byItem[l.id].name) || '', vs: {} });
+      if (!(l.rev > 0)) continue;
+      it.sales += l.rev; it.units += l.q;
+      const vi = verIdx(l.day), key = vi == null ? 'x' : vi;
+      it.vs[key] = (it.vs[key] || 0) + l.rev;
+      if (l.sku) {
+        const k = bySku[l.sku] || (bySku[l.sku] = { sales: 0, units: 0 }); k.sales += l.rev; k.units += l.q;
+        if (vi != null) { const kv = bySkuV[vi][l.sku] || (bySkuV[vi][l.sku] = { sales: 0, units: 0 }); kv.sales += l.rev; kv.units += l.q; }
+      }
+      if (l.day) {
+        const da = dayAgg[l.day] || (dayAgg[l.day] = { sw: 0, aBe: 0, aTg: 0, zs: 0, unc: 0 });
+        const e = vi != null ? vs[vi].items[l.id] : null;
+        if (e && e.m_be != null && e.m_tg != null) { da.sw += l.rev; da.aBe += l.rev * e.m_be; da.aTg += l.rev * e.m_tg; if (e.be_ok) da.zs += l.rev; }
+        else da.unc += l.rev;
+      }
     }
     for (const s of Object.values(raw.byStatus)) if (s.cls === 'done' || includeTransit) lines += s.n;
-    return { byItem, byDay, bySku, from: raw.from, to: raw.to, lines, total };
+    return { byItem, byDay, bySku, bySkuV, dayAgg, from: raw.from, to: raw.to, lines, total };
   }
 
   function applyOrderOption() {
@@ -472,7 +504,7 @@ footer { color: var(--muted); font-size: 12px; }
     const periods = [...new Map(all.filter((r) => r.period_from && r.period_to).map((r) => [r.period_from + '..' + r.period_to, { from: r.period_from, to: r.period_to }])).values()]
       .sort((a, b) => (a.from < b.from ? 1 : -1));
     if (!periods.length) throw new Error('ไม่พบช่วงวันที่ในข้อมูลโฆษณา');
-    return { caps, all, periods };
+    return { caps, all, periods, dailyAll: N.dailyRows(caps).filter((d) => d.scope === 'shop') };
   }
 
   const dayNum = (s) => Math.round(Date.parse(s) / 86400000);
@@ -529,11 +561,25 @@ footer { color: var(--muted); font-size: 12px; }
 
 
   function parseTargets(obj) {
-    if (!obj || obj.kind !== 'staff' || !Array.isArray(obj.items)) throw new Error('ไม่ใช่ไฟล์เป้าสำหรับพนักงาน (roas-targets-staff.json) ขอไฟล์ที่ถูกต้องจากผู้จัดการ');
-    state.targetsInfo = (obj.generated ? 'สร้างไฟล์เมื่อ ' + obj.generated : '') + (obj.period ? ' · ช่วงที่ใช้สร้าง ' + obj.period.from + ' ถึง ' + obj.period.to : '');
-    state.refPrices = obj.ref_prices || null;
+    if (!obj || obj.kind !== 'staff') throw new Error('ไม่ใช่ไฟล์เป้าสำหรับพนักงาน (roas-targets-staff.json) ขอไฟล์ที่ถูกต้องจากผู้จัดการ');
+    let vers;
+    if (Array.isArray(obj.versions)) vers = obj.versions;
+    else if (Array.isArray(obj.items)) vers = [{ from: null, to: null, period: obj.period || null, ref_prices: obj.ref_prices || null, items: obj.items }];
+    else throw new Error('ไฟล์เป้าไม่ถูกต้อง');
+    const out = vers.map((v) => {
+      if (!v || !Array.isArray(v.items)) throw new Error('ไฟล์เป้าไม่ถูกต้อง (เวอร์ชันไม่มีรายการสินค้า)');
+      const m = {}; for (const r of v.items) m[String(r.item_id)] = r;
+      return { from: v.from || null, to: v.to || null, period: v.period || null, refPrices: v.ref_prices || null, items: m };
+    }).sort((a, b) => (a.from || '').localeCompare(b.from || ''));
+    for (let i = 0; i < out.length; i++) {
+      const v = out[i];
+      if (v.from && v.to && v.from > v.to) throw new Error('ไฟล์เป้ามีช่วงวันที่ผิด (เริ่มหลังสิ้นสุด)');
+      if (i > 0 && (out[i - 1].to || '9999-12-31') >= (v.from || '0000-00-00')) throw new Error('ไฟล์เป้ามีช่วงวันที่ซ้อนกัน');
+    }
+    state.versions = out;
+    state.targetsInfo = (obj.generated ? 'สร้างไฟล์เมื่อ ' + obj.generated : '') + ' · เกณฑ์ ' + out.length + ' ช่วง' + (out.length === 1 && out[0].period ? ' (สร้างจากข้อมูล ' + out[0].period.from + ' ถึง ' + out[0].period.to + ')' : '');
     const map = {};
-    for (const r of obj.items) map[String(r.item_id)] = r;
+    for (const v of out) for (const [id, e] of Object.entries(v.items)) map[id] = e;
     return map;
   }
 
@@ -575,11 +621,23 @@ footer { color: var(--muted); font-size: 12px; }
 
 
 
-  function targetInfo(o, t) {
+  // เกณฑ์รายสินค้า: ถ้าสินค้าขายในหลายช่วงเกณฑ์ รวมเป็นเกณฑ์ผสมถ่วงน้ำหนักด้วยยอดขายของแต่ละช่วง (ตรงกับงบโฆษณาสูงสุดรวมของทั้งช่วง)
+  function targetInfo(o, t, id) {
     if (!t) return { has: false };
-    const be = t.roas_be == null ? null : t.roas_be, tg = t.roas_target == null ? null : t.roas_target;
-    const zeroApplies = state.zeroOK !== false && !!t.be_ok;
-    return { has: true, be, tg, need: zeroApplies ? be : tg, loss: !!t.loss, zeroApplies, mbe: t.m_be == null ? null : t.m_be, mtg: t.m_tg == null ? null : t.m_tg };
+    const vs = state.versions || [];
+    const parts = [];
+    if (o && o.vs) for (const [k, s] of Object.entries(o.vs)) { if (k === 'x' || !(s > 0)) continue; const e = vs[+k] && vs[+k].items[id]; if (e) parts.push({ s, e }); }
+    if (parts.length <= 1) {
+      const e = parts.length ? parts[0].e : t;
+      const be = e.roas_be == null ? null : e.roas_be, tg = e.roas_target == null ? null : e.roas_target;
+      const zeroApplies = state.zeroOK !== false && !!e.be_ok;
+      return { has: true, be, tg, need: zeroApplies ? be : tg, loss: !!e.loss, zeroApplies, mbe: e.m_be == null ? null : e.m_be, mtg: e.m_tg == null ? null : e.m_tg, blend: 1 };
+    }
+    let sw = 0, aBe = 0, aTg = 0, zs = 0, allLoss = true;
+    for (const { s, e } of parts) { if (e.m_be == null || e.m_tg == null) continue; sw += s; aBe += s * e.m_be; aTg += s * e.m_tg; if (e.be_ok) zs += s; if (!e.loss) allLoss = false; }
+    if (!(sw > 0)) return { has: true, be: null, tg: null, need: null, loss: false, zeroApplies: false, mbe: null, mtg: null, blend: parts.length };
+    const be = aBe > 0 ? 100 * sw / aBe : null, tg = aTg > 0 ? 100 * sw / aTg : null, zeroApplies = state.zeroOK !== false && zs / sw > 0.5;
+    return { has: true, be, tg, need: zeroApplies ? be : tg, loss: allLoss, zeroApplies, mbe: aBe / sw, mtg: aTg / sw, blend: parts.length };
   }
   function groupOf(o, t) { return (t && t.group) || '(ไม่ระบุกลุ่ม)'; }
 
@@ -592,13 +650,13 @@ footer { color: var(--muted); font-size: 12px; }
       const t = targets[a.id], o = orders.byItem[a.id];
       const sales = o ? o.sales : 0;
       const roas = a.cost > 0 ? sales / a.cost : null;
-      const ti = targetInfo(o, t);
+      const ti = targetInfo(o, t, a.id);
       const lvl = !ti.has ? 5 : classify(roas, sales, ti, ti.zeroApplies);
       return {
         id: a.id, name: (t && t.name) || a.name || (o && o.name) || '(ไม่พบชื่อ)', adGroup: [...a.groups].join(' | '),
         group: a.pseudo ? '(กลุ่มโฆษณาที่ไม่มีรายสินค้า)' : (ti.has ? groupOf(o, t) : '(ไม่มีเกณฑ์ในชีตเป้า)'), est: a.est || 0, cost: a.cost, sales, roas, shopeeRoas: a.cost > 0 ? a.gmv / a.cost : null,
 
-        need: ti.need, be: ti.be, tg: ti.tg, mbe: ti.mbe, mtg: ti.mtg, zeroApplies: ti.zeroApplies, gap: ti.need != null && roas != null ? roas - ti.need : null, lvl
+        need: ti.need, be: ti.be, tg: ti.tg, mbe: ti.mbe, mtg: ti.mtg, zeroApplies: ti.zeroApplies, blend: ti.blend || 1, gap: ti.need != null && roas != null ? roas - ti.need : null, lvl
       };
     });
     const groups = {};
@@ -670,6 +728,9 @@ footer { color: var(--muted); font-size: 12px; }
     // กราฟรายวัน
     state.roasAll = roasAll;
 
+
+    renderVersions();
+
     drawDaily(roasAll);
 
     // กลุ่ม
@@ -711,10 +772,57 @@ footer { color: var(--muted); font-size: 12px; }
     const rows = sortRows(filtered(), ...state.sort.items);
     header($('tbl-items'), [{ k: 'name', t: 'สินค้า' }, { k: 'cost', t: 'ค่าโฆษณา', r: 1 }, { k: 'sales', t: 'ยอดขาย Order', r: 1 }, { k: 'roas', t: 'ROAS จริง', r: 1 }, { k: 'need', t: 'ROAS ที่ใช้ตัดสิน', r: 1 }, { k: 'gap', t: 'ส่วนต่าง', r: 1 }, { k: 'shopeeRoas', t: 'ROAS ที่ Shopee รายงาน', r: 1 }, { k: 'lvl', t: 'สถานะ' }], 'items');
     $('tbl-items').tBodies[0].innerHTML = rows.map((r) =>
-      '<tr><td class="nm">' + esc(r.name) + (r.est > 0 ? ' <span class="pill s5">ประมาณ ' + baht(r.est) + '</span>' : '') + '<small>' + esc(r.group) + ' · ' + esc(r.adGroup) + ' · ' + esc(r.id) + '</small></td><td class="r">' + baht(r.cost) + '</td><td class="r">' + baht(r.sales) + '</td>' + '<td class="r">' + r1(r.roas) +
+      '<tr><td class="nm">' + esc(r.name) + (r.est > 0 ? ' <span class="pill s5">ประมาณ ' + baht(r.est) + '</span>' : '') + (r.blend > 1 ? ' <span class="pill s6">เกณฑ์ผสม ' + r.blend + ' ช่วง</span>' : '') + '<small>' + esc(r.group) + ' · ' + esc(r.adGroup) + ' · ' + esc(r.id) + '</small></td><td class="r">' + baht(r.cost) + '</td><td class="r">' + baht(r.sales) + '</td>' + '<td class="r">' + r1(r.roas) +
       '</td><td class="r">' + r1(r.need) + '</td><td class="r ' + (r.gap == null ? '' : r.gap < 0 ? 'neg' : 'pos') + '">' + (r.gap == null ? '—' : (r.gap > 0 ? '+' : '') + r.gap.toFixed(1)) + '</td><td class="r">' + r1(r.shopeeRoas) + '</td><td>' + pill(r.lvl) + '</td></tr>').join('');
     $('items-count').textContent = 'แสดง ' + fmtInt(rows.length) + ' จาก ' + fmtInt(view.rows.length) + ' สินค้า · ค่าโฆษณาที่แสดง ' + baht(rows.reduce((s, r) => s + r.cost, 0));
   }
+
+
+
+  function dayColor(r) {
+    const l = state.dayStatus && state.dayStatus[r.date];
+    return l === 0 ? 'var(--ok)' : (l === 1 || l === 6) ? 'var(--warn)' : (l === 2 || l === 3 || l === 4) ? 'var(--bad)' : 'var(--info)';
+  }
+  const dayCaption = ' · สีแท่ง = สถานะเทียบเกณฑ์ของวันนั้น เขียว ผ่านเป้า · เหลือง ผ่านเฉพาะจุดคุ้มทุน/ต่ำกว่าเป้า · แดง ต่ำกว่าจุดคุ้มทุน · เทา ไม่มีเกณฑ์';
+  function verLabel(vi) {
+    if (vi == null) return 'นอกช่วงเกณฑ์';
+    const v = state.versions[vi];
+    return (v.from || 'ต้น') + ' ถึง ' + (v.to || 'ปัจจุบัน');
+  }
+  function renderVersions() {
+    const o = state.orders;
+    state.dayStatus = {};
+    const adsDaily = {};
+    for (const d of (state.adsRaw && state.adsRaw.dailyAll) || []) adsDaily[d.date] = d.cost;
+    const days = [...new Set([...Object.keys(o.byDay), ...Object.keys(adsDaily)])].filter((d) => d >= o.from && d <= o.to).sort();
+    const calc = (sales, ads, ag) => {
+      const be = ag && ag.aBe > 0 ? 100 * ag.sw / ag.aBe : null, tg = ag && ag.aTg > 0 ? 100 * ag.sw / ag.aTg : null;
+      const zero = state.zeroOK !== false && !!ag && ag.sw > 0 && ag.zs / ag.sw > 0.5;
+      const roas = ads > 0 ? sales / ads : null;
+      const lvl = ads > 0 && ag && ag.sw > 0 ? classify(roas, sales, { be, tg, need: null, loss: false }, zero) : 5;
+      return { be, tg, roas, lvl };
+    };
+    const segs = new Map(), drows = [];
+    for (const d of days) {
+      const sales = o.byDay[d] || 0, ads = adsDaily[d], ag = o.dayAgg[d] || null, vi = verIdx(d);
+      const c = calc(sales, ads, ag);
+      state.dayStatus[d] = c.lvl;
+      drows.push({ date: d, ads, sales, be: c.be, tg: c.tg, roas: c.roas, lvl: c.lvl, vi, cov: ag && sales > 0 ? ag.sw / sales : null });
+      const k = vi == null ? 'x' : vi;
+      let sg = segs.get(k); if (!sg) { sg = { vi, days: 0, sales: 0, salesA: 0, ads: 0, adsDays: 0, ag: { sw: 0, aBe: 0, aTg: 0, zs: 0 } }; segs.set(k, sg); }
+      sg.days++; sg.sales += sales;
+      if (ads != null) { sg.ads += ads; sg.adsDays++; sg.salesA += sales; if (ag) { sg.ag.sw += ag.sw; sg.ag.aBe += ag.aBe; sg.ag.aTg += ag.aTg; sg.ag.zs += ag.zs; } }
+    }
+    const srows = [...segs.values()].sort((a, b) => (a.vi == null ? 9e9 : a.vi) - (b.vi == null ? 9e9 : b.vi)).map((sg) => ({ ...sg, ...calc(sg.salesA, sg.ads, sg.ag) }));
+    const hdr = (id, cols) => { const tr = document.createElement('tr'); cols.forEach(([t, r]) => { const th = document.createElement('th'); th.textContent = t; if (r) th.className = 'r'; th.style.cursor = 'default'; tr.append(th); }); $(id).tHead.replaceChildren(tr); };
+    hdr('tbl-seg', [['ช่วงเกณฑ์'], ['วัน', 1], ['ยอดขาย Order', 1], ['ค่าโฆษณา', 1], ['ROAS จริง', 1], ['ROAS เท่าทุน', 1], ['ROAS เป้า', 1], ['สถานะ']]);
+    $('tbl-seg').tBodies[0].innerHTML = srows.map((s) => '<tr><td class="nm">' + esc(verLabel(s.vi)) + '</td><td class="r">' + s.days + '</td><td class="r">' + baht(s.sales) + '</td><td class="r">' + (s.adsDays ? baht(s.ads) : '—') + '</td><td class="r">' + r1(s.roas) + '</td><td class="r">' + r1(s.be) + '</td><td class="r">' + r1(s.tg) + '</td><td>' + pill(s.lvl) + '</td></tr>').join('') || '<tr><td colspan="8" class="note">ไม่มีข้อมูล</td></tr>';
+    hdr('tbl-day', [['วันที่'], ['ช่วงเกณฑ์'], ['ยอดขาย Order', 1], ['ค่าโฆษณา', 1], ['ROAS จริง', 1], ['ROAS เท่าทุน', 1], ['ROAS เป้า', 1], ['สถานะ']]);
+    $('tbl-day').tBodies[0].innerHTML = drows.map((r) => '<tr><td>' + r.date + '</td><td>' + esc(verLabel(r.vi)) + '</td><td class="r">' + baht(r.sales) + '</td><td class="r">' + (r.ads != null ? baht(r.ads) : '—') + '</td><td class="r">' + r1(r.roas) + '</td><td class="r">' + r1(r.be) + '</td><td class="r">' + r1(r.tg) + '</td><td>' + pill(r.lvl) + '</td></tr>').join('');
+    const noAds = drows.filter((r) => r.ads == null).length;
+    $('day-note').textContent = 'เกณฑ์รายวันคำนวณจากสินค้าที่ขายได้ในวันนั้น (ที่มีเกณฑ์ในไฟล์) ถ่วงน้ำหนักด้วยยอดขาย' + (noAds ? ' · ' + noAds + ' วันไม่มีข้อมูลค่าโฆษณาในไฟล์ Ads (แสดงเป็น —)' : '') + ' · ค่าโฆษณารายสินค้ารายวันไม่มีในข้อมูล Shopee จึงตัดสินรายสินค้าได้เฉพาะรวมทั้งช่วง';
+  }
+
 
   function drawDaily(overall) {
     const el = $('daily');
@@ -727,12 +835,11 @@ footer { color: var(--muted); font-size: 12px; }
     let s = '<svg viewBox="0 0 ' + W + ' ' + H + '">';
     for (let i = 0; i <= 4; i++) { const v = maxC * i / 4; s += '<line class="grid" x1="' + m.l + '" x2="' + (W - m.r) + '" y1="' + y(v) + '" y2="' + y(v) + '"/><text x="' + (m.l - 5) + '" y="' + (y(v) + 4) + '" text-anchor="end">฿' + fmtInt(v) + '</text>'; }
     rows.forEach((r, i) => {
-      const bad = r.roas != null && overall != null && r.roas < overall * 0.85;
-      s += '<rect x="' + (m.l + i * bw + bw * 0.15) + '" y="' + y(r.cost) + '" width="' + bw * 0.7 + '" height="' + (H - m.b - y(r.cost)) + '" rx="2" fill="' + (bad ? 'var(--bad)' : 'var(--info)') + '"><title>' + r.date + ' ค่าโฆษณา ' + baht(r.cost) + ' ยอดขาย ' + baht(r.sales) + ' ROAS ' + r1(r.roas) + '</title></rect>';
+      s += '<rect x="' + (m.l + i * bw + bw * 0.15) + '" y="' + y(r.cost) + '" width="' + bw * 0.7 + '" height="' + (H - m.b - y(r.cost)) + '" rx="2" fill="' + dayColor(r, overall) + '"><title>' + r.date + ' ค่าโฆษณา ' + baht(r.cost) + ' ยอดขาย ' + baht(r.sales) + ' ROAS ' + r1(r.roas) + '</title></rect>';
       if (rows.length <= 16 || i % Math.ceil(rows.length / 16) === 0) s += '<text x="' + (m.l + i * bw + bw / 2) + '" y="' + (H - 9) + '" text-anchor="middle">' + (+r.date.slice(8)) + '/' + (+r.date.slice(5, 7)) + '</text>';
       if (rows.length <= 16) s += '<text class="v" x="' + (m.l + i * bw + bw / 2) + '" y="' + (y(r.cost) - 4) + '" text-anchor="middle">' + r1(r.roas) + '</text>';
     });
-    s += '<text x="' + m.l + '" y="14">แท่ง = ค่าโฆษณา' + (rows.length <= 16 ? ' · ตัวเลข = ROAS จริง (ยอดขาย Order ÷ ค่าโฆษณา)' : '') + ' · แท่งแดง = ROAS ต่ำกว่าค่าเฉลี่ยทั้งช่วงเกิน 15%</text></svg>';
+    s += '<text x="' + m.l + '" y="14">แท่ง = ค่าโฆษณา' + (rows.length <= 16 ? ' · ตัวเลข = ROAS จริง (ยอดขาย Order ÷ ค่าโฆษณา)' : '') + dayCaption + '</text></svg>';
     el.innerHTML = s;
   }
 
@@ -760,10 +867,16 @@ footer { color: var(--muted); font-size: 12px; }
     }
 
 
-    if (orders && orders.bySku && state.refPrices) {
-      const ds = Object.entries(orders.bySku).filter(([k, v]) => state.refPrices[k] && v.units >= 3).map(([k, v]) => [k, (v.sales / v.units) / state.refPrices[k] - 1, v.sales])
-        .filter((x) => Math.abs(x[1]) > 0.1).sort((x, y) => y[2] - x[2]);
-      if (ds.length) msg('warn', 'ราคาขายต่อชุดของ ' + ds.length + ' SKU ต่างจากตอนสร้างไฟล์เป้าเกิน 10% (เช่น ' + ds.slice(0, 4).map((x) => x[0] + ' ' + (x[1] > 0 ? '+' : '') + (x[1] * 100).toFixed(0) + '%').join(', ') + ') เกณฑ์ ROAS อาจไม่ตรงกับราคาปัจจุบัน ให้ผู้จัดการสร้างไฟล์เป้าใหม่');
+    if (orders && orders.bySkuV && state.versions) {
+      const ds = [];
+      state.versions.forEach((v, i) => {
+        if (!v.refPrices) return;
+        for (const [k, s] of Object.entries(orders.bySkuV[i] || {})) if (v.refPrices[k] && s.units >= 3) { const dr = (s.sales / s.units) / v.refPrices[k] - 1; if (Math.abs(dr) > 0.1) ds.push([k, dr, s.sales]); }
+      });
+      ds.sort((x, y) => y[2] - x[2]);
+      if (ds.length) msg('warn', 'ราคาขายต่อชุดของ ' + ds.length + ' SKU ต่างจากตอนสร้างเกณฑ์ช่วงนั้นเกิน 10% (เช่น ' + ds.slice(0, 4).map((x) => x[0] + ' ' + (x[1] > 0 ? '+' : '') + (x[1] * 100).toFixed(0) + '%').join(', ') + ') เกณฑ์ ROAS อาจไม่ตรงกับราคาปัจจุบัน ให้ผู้จัดการสร้างเกณฑ์ช่วงใหม่');
+      let unc = 0; for (const d of Object.values(orders.dayAgg || {})) unc += d.unc;
+      if (orders.total > 0 && unc / orders.total > 0.02) msg('warn', 'ยอดขาย ' + baht(unc) + ' (' + (unc / orders.total * 100).toFixed(0) + '%) ไม่มีเกณฑ์ ROAS ในไฟล์ (วันที่นอกช่วงที่เกณฑ์ครอบคลุม หรือสินค้าที่ไม่มีในไฟล์) ไม่ถูกนำไปคำนวณเกณฑ์');
     }
 
     if (ads && ads.missing.length) msg('warn', 'มี ' + ads.missing.length + ' กลุ่มโฆษณาที่มีค่าโฆษณาแต่ไม่มีข้อมูลรายสินค้า (ยังไม่ได้วนอ่านกลุ่ม) รวม ' + baht(ads.missing.reduce((s, r) => s + r.cost, 0)) + ': ' + ads.missing.map((r) => r.campaign_name + ' ' + baht(r.cost)).join(', '));
@@ -801,7 +914,7 @@ footer { color: var(--muted); font-size: 12px; }
     const f = $('f-targets').files[0]; if (!f) return;
     try {
       const j = JSON.parse(await readText(f));
-      if (!j || !Array.isArray(j.items)) throw new Error('ไฟล์เป้า ROAS ไม่ถูกต้อง');
+      if (!j || !(Array.isArray(j.items) || Array.isArray(j.versions))) throw new Error('ไฟล์เป้า ROAS ไม่ถูกต้อง');
       try { localStorage.setItem('roas-targets', JSON.stringify(j)); } catch (e) {}
       setTargets(parseTargets(j), 'ไฟล์ ' + f.name);
     } catch (e) { fail('st-targets', e); }
