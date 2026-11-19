@@ -88,34 +88,30 @@ $('batch').onclick = async () => {
 };
 $('stop').onclick = async () => { await send({ type: 'stop' }); say('สั่งหยุดแล้ว'); };
 
-// ดึงทีละวัน: งานอยู่ใน chrome.storage ('job') ให้ content script ทำต่อเองหลังโหลดหน้าแต่ละวัน
+// ดึงทีละวัน: เข้าแต่ละกลุ่มโฆษณาก่อน แล้วเลือกวันที่ทีละวันในหน้ากลุ่ม (ไม่โหลดหน้าใหม่) ไม่ต้องตั้งช่วงวันที่ข้อ 0 ก่อน
 $('dailystart').onclick = async () => {
   const d1 = $('d1').value, d2 = $('d2').value;
-  if (!d1 || !d2 || d1 > d2) return say('เลือกวันที่เริ่มและวันที่สิ้นสุดให้ถูกต้อง');
-  if ((await caps()).length) return say('ยังมีข้อมูลที่ดักไว้ กดบันทึกข้อมูลดิบเป็น JSON ถ้ายังต้องการ แล้วกด "ล้างข้อมูลที่ดักไว้" ก่อนเริ่มดึงทีละวัน');
-  const t = await tab();
-  let u;
-  try { u = new URL(t.url); } catch (e) { return say('ใช้ได้เฉพาะหน้า Shopee Ads'); }
-  if (!/shopee\.co\.th$/.test(u.hostname) || !u.pathname.includes('/marketing/pas')) return say('เปิดหน้า Shopee Ads (รายการกลุ่มโฆษณา) ก่อน แล้วค่อยกดปุ่มนี้');
+  if (!d1 || !d2 || d1 > d2) return say('เลือกวันที่เริ่มและวันที่สิ้นสุดให้ถูกต้อง (ข้อ 0 ใช้กำหนดช่วงวันที่เท่านั้น ไม่ต้องกด "ไปที่ช่วงวันที่นี้")');
   const lastDay = iso(new Date(Date.now() - 86400e3));   // เมื่อวาน (วันนี้ยังไม่จบ ตัวเลขยังไม่นิ่ง)
   const days = [];
   for (let d = new Date(d1 + 'T00:00:00Z'); d.toISOString().slice(0, 10) <= (d2 < lastDay ? d2 : lastDay); d.setUTCDate(d.getUTCDate() + 1)) days.push(d.toISOString().slice(0, 10));
   if (!days.length) return say('ไม่มีวันที่จบแล้วในช่วงนี้');
-  await chrome.storage.local.set({ job: { running: true, base: t.url, days, i: 0, tries: 0, msg: 'เริ่ม ' + days.length + ' วัน' } });
-  u.searchParams.set('from', Math.floor(Date.parse(days[0] + 'T00:00:00+07:00') / 1000));
-  u.searchParams.set('to', Math.floor(Date.parse(days[0] + 'T23:59:59+07:00') / 1000));
-  u.searchParams.set('group', 'custom');
-  await chrome.tabs.update(t.id, { url: u.toString() });
-  say('เริ่มดึงทีละวัน ' + days.length + ' วัน (' + days[0] + ' ถึง ' + days[days.length - 1] + ') ปิด popup ได้');
+  const n = await send({ type: 'rowCount' });
+  if (n.error) return say(n.error);
+  if (!n.n) return say('เปิดหน้ารายการกลุ่มโฆษณา (หน้าแรกของ Shopee Ads ที่มีตารางกลุ่ม) ก่อน แล้วค่อยกดปุ่มนี้');
+  await chrome.storage.local.set({ job: { running: true, days, msg: 'เริ่ม ' + days.length + ' วัน' } });
+  const r = await send({ type: 'batchDaily', opts: { days, from: Math.max(0, +$('from').value - 1), limit: 0 } });
+  say(r.error || 'เริ่มดึงทีละวัน ' + days.length + ' วัน (' + days[0] + ' ถึง ' + days[days.length - 1] + ') × ' + n.n + ' กลุ่ม ทิ้งแท็บ Shopee ไว้ ปิด popup ได้ ดูความคืบหน้าที่ล็อกด้านบน');
 };
 $('dailystop').onclick = async () => {
+  await send({ type: 'stop' });
   const { job } = await chrome.storage.local.get('job');
   if (job) await chrome.storage.local.set({ job: Object.assign(job, { running: false, msg: 'สั่งหยุดแล้ว' }) });
-  say('สั่งหยุดดึงทีละวันแล้ว');
+  say('สั่งหยุดแล้ว (จะหยุดหลังจบวันที่กำลังอ่าน)');
 };
 async function jobStatus() {
   const { job } = await chrome.storage.local.get('job');
-  $('jobmsg').textContent = job ? (job.running ? '▶ ' : '■ ') + (job.msg || '') + ' · วันที่ทำเสร็จ ' + Math.min(job.i, job.days.length) + '/' + job.days.length : '—';
+  $('jobmsg').textContent = job ? (job.running ? '▶ ' : '■ ') + (job.msg || '') + '' : '—';
 }
 $('rawdump').onclick = async () => { download('ads_dump_' + stamp() + '.json', JSON.stringify(await caps()), 'application/json'); };
 $('clear').onclick = async () => { await chrome.runtime.sendMessage({ type: 'clear' }); refresh(); };

@@ -14,11 +14,8 @@ chrome.runtime.onMessage.addListener((msg, _s, reply) => {
       const { [KEY]: caps = [], debug, job } = await chrome.storage.local.get([KEY, 'debug', 'job']);
       const cap = msg.cap;
       if (!debug && !WANT.test(pathOf(cap.url))) return;
-      // โหมดทีละวัน: กราฟรายวันของแต่ละวันไม่จำเป็นและใหญ่ที่สุด ชื่อสินค้าเก็บแค่วันแรก
-      if (job && job.running && !debug) {
-        const p = pathOf(cap.url);
-        if (/get_time_graph/.test(p) || (job.i > 0 && /\/product\/get\//.test(p))) return;
-      }
+      // โหมดทีละวัน: กราฟรายวันและข้อมูลหน้ารายการกลุ่มไม่จำเป็น (ใหญ่) เก็บเฉพาะรายสินค้ารายวัน
+      if (job && job.running && !debug && /get_time_graph|homepage\/query/.test(pathOf(cap.url))) return;
       cap.key = pathOf(cap.url) + '|' + cap.page + '|' + hash(cap.body);
       const i = caps.findIndex((c) => c.key === cap.key);
       if (i >= 0) caps.splice(i, 1);   // ข้อมูลเดิมซ้ำ เก็บอันใหม่

@@ -507,7 +507,7 @@ footer { color: var(--muted); font-size: 12px; }
       .sort((a, b) => (a.from < b.from ? 1 : -1));
     if (!periods.length) throw new Error('ไม่พบช่วงวันที่ในข้อมูลโฆษณา');
     const raw = { caps, all, periods, dailyAll: N.dailyRows(caps).filter((d) => d.scope === 'shop') };
-    if (!raw.dailyAll.length) raw.dailyAll = [...dayPeriods(raw).values()].map((p) => ({ date: p.from, cost: buildAds(raw, p).campTotal }));   // ทีละวันไม่มีกราฟรายวัน ใช้ยอดรวมแคมเปญของวันนั้น
+    if (!raw.dailyAll.length) raw.dailyAll = [...dayPeriods(raw).values()].map((p) => ({ date: p.from, cost: (() => { const x = buildAds(raw, p); return x.campTotal || x.total; })() }));   // ทีละวันไม่มีกราฟรายวัน ใช้ยอดรวมแคมเปญ (ถ้าไม่มีใช้ผลรวมรายสินค้า) ของวันนั้น
     return raw;
   }
 
@@ -560,7 +560,7 @@ footer { color: var(--muted); font-size: 12px; }
         it.cost += x.cost; it.gmv += x.gmv; it.clicks += x.clicks; x.groups.forEach((g) => it.groups.add(g)); if (!it.name) it.name = x.name;
       }
       missing.push(...a.missing); total += a.total; campTotal += a.campTotal;
-      daily.push(...(a.daily.length ? a.daily : [{ date: days[i], cost: a.campTotal }]));
+      daily.push(...(a.daily.length ? a.daily : [{ date: days[i], cost: a.campTotal || a.total }]));
     });
     return { items, period: { from: f, to: t }, others: 0, daily, missing, campTotal, total };
   }
