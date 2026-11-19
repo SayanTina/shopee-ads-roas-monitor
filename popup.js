@@ -100,8 +100,8 @@ $('dailystart').onclick = async () => {
   if (n.error) return say(n.error);
   if (!n.n) return say('เปิดหน้ารายการกลุ่มโฆษณา (หน้าแรกของ Shopee Ads ที่มีตารางกลุ่ม) ก่อน แล้วค่อยกดปุ่มนี้');
   await chrome.storage.local.set({ job: { running: true, days, msg: 'เริ่ม ' + days.length + ' วัน' } });
-  const r = await send({ type: 'batchDaily', opts: { days, from: Math.max(0, +$('from').value - 1), limit: 0 } });
-  say(r.error || 'เริ่มดึงทีละวัน ' + days.length + ' วัน (' + days[0] + ' ถึง ' + days[days.length - 1] + ') × ' + n.n + ' กลุ่ม ทิ้งแท็บ Shopee ไว้ ปิด popup ได้ ดูความคืบหน้าที่ล็อกด้านบน');
+  const r = await send({ type: 'batchDaily', opts: { days, from: Math.max(0, +$('from').value - 1), limit: +$('limit').value } });
+  say(r.error || 'เริ่มดึงทีละวัน ' + days.length + ' วัน (' + days[0] + ' ถึง ' + days[days.length - 1] + ') เริ่มแถวที่ ' + (+$('from').value || 1) + ' จำนวน ' + (+$('limit').value || 'ทุก') + ' กลุ่ม (จากทั้งหมด ' + n.n + ') ทิ้งแท็บ Shopee ไว้ ปิด popup ได้ ดูความคืบหน้าที่ล็อกด้านบน');
 };
 $('dailystop').onclick = async () => {
   await send({ type: 'stop' });
