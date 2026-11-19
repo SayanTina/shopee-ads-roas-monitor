@@ -105,6 +105,51 @@ async function batch(opts) {
   }
 }
 
+// ---------- โหมดดึงทีละวัน ----------
+// งานเก็บใน chrome.storage ('job') เพราะแต่ละวันโหลดหน้าใหม่ แล้ว content script เริ่มใหม่และมาทำต่อจากตรงนี้
+const dayUrl = (base, day) => {
+  const u = new URL(base);
+  u.searchParams.set('from', Math.floor(Date.parse(day + 'T00:00:00+07:00') / 1000));
+  u.searchParams.set('to', Math.floor(Date.parse(day + 'T23:59:59+07:00') / 1000));
+  u.searchParams.set('group', 'custom');
+  return u.toString();
+};
+const getJob = async () => (await chrome.storage.local.get('job')).job || null;
+async function setJob(patch) {
+  const j = await getJob();
+  if (j) await chrome.storage.local.set({ job: Object.assign(j, patch) });
+}
+
+async function resumeJob() {
+  const job = await getJob();
+  if (!job || !job.running || state.running) return;
+  const day = job.days[job.i];
+  if (!day) { await setJob({ running: false, msg: 'เสร็จทุกวัน' }); return; }
+  const want = new URL(dayUrl(job.base, day)), cur = new URL(location.href);
+  if (cur.searchParams.get('from') !== want.searchParams.get('from') || cur.searchParams.get('to') !== want.searchParams.get('to')) {
+    if ((job.tries || 0) >= 3) { await setJob({ running: false, msg: 'หน้าไม่เปลี่ยนเป็นวันที่ ' + day + ' หยุดงาน' }); return; }
+    await setJob({ tries: (job.tries || 0) + 1, msg: 'ไปที่วันที่ ' + day });
+    location.replace(want.toString());
+    return;
+  }
+  for (let k = 0; k < 75 && !rowLinks().length; k++) await sleep(400);
+  const label = 'วันที่ ' + day + ' (' + (job.i + 1) + '/' + job.days.length + ')';
+  if (rowLinks().length) {
+    await setJob({ tries: 0, msg: label + ' กำลังอ่านทุกกลุ่ม' });
+    await batch({});
+  } else {
+    await setJob({ tries: 0, msg: label + ' ไม่พบแถวกลุ่มโฆษณา ข้ามวันนี้' });
+  }
+  const now = await getJob();
+  if (!now || !now.running || state.stop) { await setJob({ running: false, msg: 'หยุดแล้วที่ ' + label }); return; }
+  const next = job.i + 1;
+  if (next >= job.days.length) { await setJob({ i: next, running: false, msg: 'เสร็จครบ ' + job.days.length + ' วัน กดบันทึกข้อมูลดิบเป็น JSON ได้เลย' }); return; }
+  await setJob({ i: next, tries: 0 });
+  location.href = dayUrl(job.base, job.days[next]);
+}
+chrome.storage.onChanged.addListener((ch) => { if (ch.job && ch.job.newValue && !ch.job.newValue.running && state.running) state.stop = true; });
+if (document.readyState === 'complete') resumeJob(); else window.addEventListener('load', () => { sleep(1000).then(resumeJob); });
+
 chrome.runtime.onMessage.addListener((msg, _s, reply) => {
   switch (msg.type) {
     case 'setDebug': setDebug(!!msg.on); reply({ ok: true }); break;

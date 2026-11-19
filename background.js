@@ -1,7 +1,7 @@
 // เก็บข้อมูลที่ดักได้ไว้ใน chrome.storage.local จนกว่าผู้ใช้จะกดล้าง
 // เก็บเฉพาะ API ที่ใช้จริง (ยกเว้นเปิดโหมดตรวจสอบ) และตัดซ้ำ เพื่อไม่ให้ข้อมูลกลุ่มแรกๆ ถูกดันทิ้งตอนวนอ่านหลายกลุ่ม
 const KEY = 'caps';
-const MAX_ITEMS = 600;
+const MAX_ITEMS = 4000;
 const WANT = /\/pas\/v1\/(homepage\/query|product\/get|product\/mpd\/list_item_product_performance|report\/get_time_graph)\/$/;
 let queue = Promise.resolve();
 
@@ -11,9 +11,14 @@ function hash(s) { let h = 5381; for (let i = 0; i < s.length; i++) h = ((h << 5
 chrome.runtime.onMessage.addListener((msg, _s, reply) => {
   if (msg.type === 'capture') {
     queue = queue.then(async () => {
-      const { [KEY]: caps = [], debug } = await chrome.storage.local.get([KEY, 'debug']);
+      const { [KEY]: caps = [], debug, job } = await chrome.storage.local.get([KEY, 'debug', 'job']);
       const cap = msg.cap;
       if (!debug && !WANT.test(pathOf(cap.url))) return;
+      // โหมดทีละวัน: กราฟรายวันของแต่ละวันไม่จำเป็นและใหญ่ที่สุด ชื่อสินค้าเก็บแค่วันแรก
+      if (job && job.running && !debug) {
+        const p = pathOf(cap.url);
+        if (/get_time_graph/.test(p) || (job.i > 0 && /\/product\/get\//.test(p))) return;
+      }
       cap.key = pathOf(cap.url) + '|' + cap.page + '|' + hash(cap.body);
       const i = caps.findIndex((c) => c.key === cap.key);
       if (i >= 0) caps.splice(i, 1);   // ข้อมูลเดิมซ้ำ เก็บอันใหม่

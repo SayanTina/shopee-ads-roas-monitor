@@ -37,6 +37,13 @@
 <div id="log" class="muted">—</div>
 
 <hr>
+<b>3. ดึงทีละวัน (ให้ระบบหาช่วงราคารายตะกร้าเอง)</b>
+<div class="muted">ใช้ช่วงวันที่ในข้อ 0 (ไม่รวมวันนี้) เปิดหน้ารายการกลุ่มโฆษณาก่อน ล้างข้อมูลที่ดักไว้ แล้วกดเริ่ม ระบบจะโหลดทีละวัน วนอ่านทุกกลุ่ม แล้วไปวันถัดไปเอง ทิ้งแท็บ Shopee นี้ไว้ ใช้เวลานาน</div>
+<button class="primary" id="dailystart">เริ่มดึงทีละวัน</button>
+<button class="stop" id="dailystop">หยุดดึงทีละวัน</button>
+<div id="jobmsg" class="muted">—</div>
+
+<hr>
 <label><input type="checkbox" id="debug"> โหมดตรวจสอบ (ดักทุก JSON ไม่เลือก URL)</label>
 <div class="muted">ใช้ตอนข้อมูลไม่ขึ้น เพื่อดูว่าหน้าใช้ API ตัวไหน</div>
 <button id="rawdump">บันทึกข้อมูลดิบทั้งหมดเป็น JSON</button>

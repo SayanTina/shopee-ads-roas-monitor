@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Shopee Ads Reader",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "อ่านข้อมูลโฆษณาจากหน้า Shopee Ads ที่เปิดอยู่ แล้วบันทึกเป็นไฟล์ CSV เพื่อเทียบกับยอดขายรายกลุ่ม/ตะกร้า",
   "permissions": ["unlimitedStorage", "storage", "downloads", "activeTab", "tabs"],
   "host_permissions": ["https://seller.shopee.co.th/*", "https://*.shopee.co.th/*"],

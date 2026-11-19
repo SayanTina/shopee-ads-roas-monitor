@@ -461,11 +461,12 @@ footer { color: var(--muted); font-size: 12px; }
       if (!(l.cls === 'done' || includeTransit)) continue;
       if (l.day) byDay[l.day] = (byDay[l.day] || 0) + l.rev;
       total += l.rev;
-      const it = byItem[l.id] || (byItem[l.id] = { sales: 0, units: 0, name: (raw.byItem[l.id] && raw.byItem[l.id].name) || '', vs: {} });
+      const it = byItem[l.id] || (byItem[l.id] = { sales: 0, units: 0, name: (raw.byItem[l.id] && raw.byItem[l.id].name) || '', vs: {}, vu: null });
       if (!(l.rev > 0)) continue;
       it.sales += l.rev; it.units += l.q;
       const vi = verIdx(l.day), key = vi == null ? 'x' : vi;
       it.vs[key] = (it.vs[key] || 0) + l.rev;
+      if (vi != null) { const vu = it.vu || (it.vu = {}); vu[vi] = (vu[vi] || 0) + l.q; }
       if (l.sku) {
         const k = bySku[l.sku] || (bySku[l.sku] = { sales: 0, units: 0 }); k.sales += l.rev; k.units += l.q;
         if (vi != null) { const kv = bySkuV[vi][l.sku] || (bySkuV[vi][l.sku] = { sales: 0, units: 0 }); kv.sales += l.rev; kv.units += l.q; }
@@ -505,7 +506,9 @@ footer { color: var(--muted); font-size: 12px; }
     const periods = [...new Map(all.filter((r) => r.period_from && r.period_to).map((r) => [r.period_from + '..' + r.period_to, { from: r.period_from, to: r.period_to }])).values()]
       .sort((a, b) => (a.from < b.from ? 1 : -1));
     if (!periods.length) throw new Error('ไม่พบช่วงวันที่ในข้อมูลโฆษณา');
-    return { caps, all, periods, dailyAll: N.dailyRows(caps).filter((d) => d.scope === 'shop') };
+    const raw = { caps, all, periods, dailyAll: N.dailyRows(caps).filter((d) => d.scope === 'shop') };
+    if (!raw.dailyAll.length) raw.dailyAll = [...dayPeriods(raw).values()].map((p) => ({ date: p.from, cost: buildAds(raw, p).campTotal }));   // ทีละวันไม่มีกราฟรายวัน ใช้ยอดรวมแคมเปญของวันนั้น
+    return raw;
   }
 
   const dayNum = (s) => Math.round(Date.parse(s) / 86400000);
@@ -546,9 +549,43 @@ footer { color: var(--muted); font-size: 12px; }
     return { items, period: wp, others, daily, missing, campTotal, total: Object.values(items).reduce((s, x) => s + x.cost, 0) };
   }
 
+  // ---------- Ads รายวัน (extension โหมดทีละวัน: ทุกช่วงยาว 1 วัน) ประกอบเป็นช่วงใดก็ได้ ----------
+  const dayStr = (n) => new Date(n * 86400000).toISOString().slice(0, 10);
+  const dayPeriods = (raw) => new Map(raw.periods.filter((p) => p.from === p.to).map((p) => [p.from, p]));
+  function mergeAds(parts, days, f, t) {
+    const items = {}, missing = [], daily = []; let total = 0, campTotal = 0;
+    parts.forEach((a, i) => {
+      for (const [id, x] of Object.entries(a.items)) {
+        const it = items[id] || (items[id] = { id, name: x.name, cost: 0, gmv: 0, clicks: 0, groups: new Set() });
+        it.cost += x.cost; it.gmv += x.gmv; it.clicks += x.clicks; x.groups.forEach((g) => it.groups.add(g)); if (!it.name) it.name = x.name;
+      }
+      missing.push(...a.missing); total += a.total; campTotal += a.campTotal;
+      daily.push(...(a.daily.length ? a.daily : [{ date: days[i], cost: a.campTotal }]));
+    });
+    return { items, period: { from: f, to: t }, others: 0, daily, missing, campTotal, total };
+  }
+  // คืน {ads, days, missingDays}: ads = null ถ้าไม่มีข้อมูลรายวันเลยในช่วงนี้
+  function composeAds(raw, f, t) {
+    const have = dayPeriods(raw), all = [];
+    for (let d = dayNum(f); d <= dayNum(t); d++) all.push(dayStr(d));
+    const got = all.filter((d) => have.has(d)), missingDays = all.filter((d) => !have.has(d));
+    if (!got.length) return { ads: null, days: all, missingDays };
+    return { ads: mergeAds(got.map((d) => buildAds(raw, have.get(d))), got, got[0], got[got.length - 1]), days: all, missingDays };
+  }
+
   function applyPeriod() {
     if (!state.adsRaw || !state.adsRaw.periods) return;
     const sel = $('fperiod');
+    const dayMode = !state.periodKeyPinned && state.orders && dayPeriods(state.adsRaw).size >= 3;
+    const dc = dayMode ? composeAds(state.adsRaw, state.orders.from, state.orders.to) : null;
+    if (dc && dc.ads) {
+      state.adsBase = dc.ads; state.ads = dc.ads; state.periodKey = null; state.adsDayMode = true;
+      $('periodrow').classList.add('hidden');
+      $('st-ads').textContent = state.adsFiles + ' · Ads รายวัน ' + (dc.days.length - dc.missingDays.length) + ' วัน (' + dc.ads.period.from + ' ถึง ' + dc.ads.period.to + ') · ' + fmtInt(Object.keys(dc.ads.items).length) + ' สินค้า';
+      $('st-ads').className = 'st ok';
+      return;
+    }
+    state.adsDayMode = false;
     const wp = state.adsRaw.periods.find((p) => pkey(p) === state.periodKey) || bestPeriod(state.adsRaw.periods, state.orders);
     state.periodKey = pkey(wp);
     sel.innerHTML = state.adsRaw.periods.map((p) => '<option value="' + pkey(p) + '">' + p.from + ' ถึง ' + p.to + '</option>').join('');
@@ -562,16 +599,36 @@ footer { color: var(--muted); font-size: 12px; }
 
 
 
+  // ไฟล์รุ่น 6: แต่ละสินค้ามีช่วงราคาของตัวเอง -> ตัดช่วงกลางตามวันเริ่ม/สิ้นสุดของทุกช่วงในไฟล์ แล้วสร้างเวอร์ชันของแต่ละช่วงกลาง
+  // (สินค้าที่ไม่เปลี่ยนราคาจะได้เกณฑ์เดียวกันทุกเวอร์ชัน แล้วถูกรวมเป็นแถวเดียวตอนแสดงผล)
+  function versionsFromPeriods(items) {
+    const sh = (d, n) => new Date(Date.parse(d) + n * 86400000).toISOString().slice(0, 10);
+    const cuts = new Set(); let openStart = false;
+    for (const it of items) for (const p of it.periods) { if (p.from) cuts.add(p.from); else openStart = true; if (p.to) cuts.add(sh(p.to, 1)); }
+    const starts = (openStart ? [null] : []).concat([...cuts].sort());
+    if (!starts.length) starts.push(null);
+    return starts.map((f, i) => {
+      const to = i + 1 < starts.length ? sh(starts[i + 1], -1) : null, at = f || '0000-00-00', m = [], ref = {};
+      for (const it of items) {
+        const p = it.periods.find((q) => (!q.from || q.from <= at) && (!q.to || q.to >= at));
+        if (!p) continue;
+        m.push({ item_id: it.item_id, name: it.name, group: it.group, roas_be: p.roas_be, roas_target: p.roas_target, be_ok: p.be_ok, loss: p.loss, m_be: p.m_be, m_tg: p.m_tg });
+        if (p.ref_price) ref[String(it.item_id)] = p.ref_price;
+      }
+      return { from: f, to, period: null, ref_prices: null, ref_items: ref, items: m };
+    });
+  }
   function parseTargets(obj) {
     if (!obj || obj.kind !== 'staff') throw new Error('ไม่ใช่ไฟล์เป้าสำหรับพนักงาน (roas-targets-staff.json) ขอไฟล์ที่ถูกต้องจากผู้จัดการ');
     let vers;
     if (Array.isArray(obj.versions)) vers = obj.versions;
+    else if (Array.isArray(obj.items) && obj.items.length && Array.isArray(obj.items[0].periods)) vers = versionsFromPeriods(obj.items);
     else if (Array.isArray(obj.items)) vers = [{ from: null, to: null, period: obj.period || null, ref_prices: obj.ref_prices || null, items: obj.items }];
     else throw new Error('ไฟล์เป้าไม่ถูกต้อง');
     const out = vers.map((v) => {
       if (!v || !Array.isArray(v.items)) throw new Error('ไฟล์เป้าไม่ถูกต้อง (เวอร์ชันไม่มีรายการสินค้า)');
       const m = {}; for (const r of v.items) m[String(r.item_id)] = r;
-      return { from: v.from || null, to: v.to || null, period: v.period || null, refPrices: v.ref_prices || null, items: m };
+      return { from: v.from || null, to: v.to || null, period: v.period || null, refPrices: v.ref_prices || null, refItems: v.ref_items || null, items: m };
     }).sort((a, b) => (a.from || '').localeCompare(b.from || ''));
     for (let i = 0; i < out.length; i++) {
       const v = out[i];
@@ -656,7 +713,9 @@ footer { color: var(--muted); font-size: 12px; }
         const df = Math.abs(dayNum(p.from) - dayNum(f)), dt = Math.abs(dayNum(p.to) - dayNum(t));
         if (df <= 1 && dt <= 1 && (!best || df + dt < best.d)) best = { p, d: df + dt };
       }
-      if (best) segs.push({ vi, from: f, to: t, period: best.p }); else missing.push({ vi, from: f, to: t });
+      if (best) { segs.push({ vi, from: f, to: t, period: best.p }); return; }
+      const dc = composeAds(raw, f, t);
+      if (dc.ads && !dc.missingDays.length) segs.push({ vi, from: f, to: t, pre: dc.ads }); else missing.push({ vi, from: f, to: t, missingDays: dc.missingDays });
     });
     if (segs.length + missing.length < 2) return null;
     return { segs, missing };
@@ -669,7 +728,7 @@ footer { color: var(--muted); font-size: 12px; }
     const items = {}, missing = [], daily = [];
     let total = 0, campTotal = 0;
     for (const sg of plan.segs) {
-      sg.ads = buildAds(state.adsRaw, sg.period);
+      sg.ads = sg.pre || buildAds(state.adsRaw, sg.period);
       for (const [id, a] of Object.entries(sg.ads.items)) {
         const it = items[id] || (items[id] = { id, name: a.name, cost: 0, gmv: 0, clicks: 0, groups: new Set() });
         it.cost += a.cost; it.gmv += a.gmv; it.clicks += a.clicks; a.groups.forEach((g) => it.groups.add(g));
@@ -678,7 +737,7 @@ footer { color: var(--muted); font-size: 12px; }
     }
     const from = plan.segs.map((s) => s.from).sort()[0], to = plan.segs.map((s) => s.to).sort().slice(-1)[0];
     state.ads = { items, period: { from, to }, others: 0, daily, missing, campTotal, total, segs: plan.segs };
-    $('st-ads').textContent = state.adsFiles + ' · แยกตามช่วงเกณฑ์ ' + plan.segs.length + ' ช่วง (' + plan.segs.map((s) => s.period.from + '–' + s.period.to).join(', ') + ')';
+    $('st-ads').textContent = state.adsFiles + ' · แยกตามช่วงเกณฑ์ ' + plan.segs.length + ' ช่วง (' + plan.segs.map((s) => s.from + '–' + s.to).join(', ') + ')';
     $('st-ads').className = 'st ok';
     $('periodrow').classList.add('hidden');
   }
@@ -703,7 +762,22 @@ footer { color: var(--muted); font-size: 12px; }
     const out = [];
     for (const list of per.values()) {
       const same = list.length > 1 && list.every((r) => r.ti.has === list[0].ti.has && r.be === list[0].be && r.tg === list[0].tg && r.zeroApplies === list[0].zeroApplies && r.ti.loss === list[0].ti.loss);
-      if (!same) { out.push(...list); continue; }
+      if (!same) {
+        if (list.length > 1) {   // แถวรวมทั้งเดือนของตะกร้านี้ (เกณฑ์ผสมถ่วงน้ำหนักด้วยยอดขายแต่ละช่วง) + แถวรายช่วงต่อท้าย
+          const t = Object.assign({}, list[0]);
+          t.cost = list.reduce((s, r) => s + r.cost, 0); t.sales = list.reduce((s, r) => s + r.sales, 0); t.est = list.reduce((s, r) => s + r.est, 0); t.gmv = list.reduce((s, r) => s + r.gmv, 0);
+          t.roas = t.cost > 0 ? t.sales / t.cost : null; t.shopeeRoas = t.cost > 0 ? t.gmv / t.cost : null;
+          let sw = 0, aBe = 0, aTg = 0, zs = 0, allLoss = true;
+          for (const r of list) { if (!r.ti.loss) allLoss = false; if (r.sales > 0 && r.mbe != null && r.mtg != null) { sw += r.sales; aBe += r.sales * r.mbe; aTg += r.sales * r.mtg; if (r.zeroApplies) zs += r.sales; } }
+          t.be = aBe > 0 ? 100 * sw / aBe : null; t.tg = aTg > 0 ? 100 * sw / aTg : null; t.mbe = sw > 0 ? aBe / sw : null; t.mtg = sw > 0 ? aTg / sw : null;
+          t.zeroApplies = state.zeroOK !== false && sw > 0 && zs / sw > 0.5; t.need = t.zeroApplies ? t.be : t.tg;
+          t.gap = t.need != null && t.roas != null ? t.roas - t.need : null;
+          t.lvl = classify(t.roas, t.sales, { be: t.be, tg: t.tg, need: t.need, loss: allLoss }, t.zeroApplies);
+          t.isTotal = true; t.segLabel = 'รวมทั้งเดือน'; t.blend = 1;
+          out.push(t);
+        }
+        out.push(...list); continue;
+      }
       const m = Object.assign({}, list[0]);
       m.cost = list.reduce((s, r) => s + r.cost, 0); m.sales = list.reduce((s, r) => s + r.sales, 0); m.est = list.reduce((s, r) => s + r.est, 0); m.gmv = list.reduce((s, r) => s + r.gmv, 0);
       m.roas = m.cost > 0 ? m.sales / m.cost : null; m.shopeeRoas = m.cost > 0 ? m.gmv / m.cost : null;
@@ -733,8 +807,8 @@ footer { color: var(--muted); font-size: 12px; }
         need: ti.need, be: ti.be, tg: ti.tg, mbe: ti.mbe, mtg: ti.mtg, zeroApplies: ti.zeroApplies, blend: ti.blend || 1, gap: ti.need != null && roas != null ? roas - ti.need : null, lvl
       };
     });
-    const groups = {};
-    for (const r of rows) {
+    const groups = {}, base = rows.filter((r) => !r.isTotal);   // แถวรวมทั้งเดือนใช้แสดงในตารางสินค้าอย่างเดียว ไม่นับซ้ำในกลุ่ม/ตัวเลขรวม
+    for (const r of base) {
       const g = groups[r.group] || (groups[r.group] = { group: r.group, cost: 0, sales: 0, items: 0, ids: new Set(), bad: 0, cs: 0, cw: 0, aBe: 0, aTg: 0, sw: 0, zs: 0 });
       g.cost += r.cost; g.sales += r.sales; g.ids.add(r.id); g.items = g.ids.size;
       if (r.lvl >= 2 && r.lvl <= 4) g.bad += r.cost;
@@ -753,7 +827,7 @@ footer { color: var(--muted); font-size: 12px; }
 
       return g;
     });
-    return { rows, glist };
+    return { rows, base, glist };
   }
 
   // ---------- แสดงผล ----------
@@ -782,19 +856,19 @@ footer { color: var(--muted); font-size: 12px; }
     view = compute();
     if (!view) { $('results').classList.add('hidden'); return; }
     $('results').classList.remove('hidden');
-    const { rows, glist } = view;
+    const { rows, base, glist } = view;
     const orders = state.orders, ads = state.ads;
     const totalCost = ads.total + ads.missing.reduce((s, r) => s + r.cost, 0);
     const roasAll = totalCost > 0 ? orders.total / totalCost : null;
-    const rowsCost = rows.reduce((s, r) => s + r.cost, 0) || 1;
-    const share = (f) => rows.filter(f).reduce((s, r) => s + r.cost, 0) / rowsCost * 100;
+    const rowsCost = base.reduce((s, r) => s + r.cost, 0) || 1;
+    const share = (f) => base.filter(f).reduce((s, r) => s + r.cost, 0) / rowsCost * 100;
     const k = [
       ['ค่าโฆษณารวม', baht(totalCost)], ['ยอดขาย Order รวม', baht(orders.total)], ['ROAS จริงรวมทั้งร้าน', r1(roasAll)],
       ['ค่าโฆษณาที่ผ่านเป้า (กำไร ≥ 5%)', r1(share((r) => r.lvl === 0)) + '%'], ['ผ่านที่จุดคุ้มทุน / คุ้มทุนแต่ต่ำกว่าเป้า', r1(share((r) => r.lvl === 6 || r.lvl === 1)) + '%'], ['ไม่คุ้มทุน / ไม่มียอดขาย / ขาดทุน', r1(share((r) => r.lvl >= 2 && r.lvl <= 4)) + '%'],
-      ['สินค้าที่มีโฆษณา', fmtInt(rows.length)]
+      ['สินค้าที่มีโฆษณา', fmtInt(new Set(base.map((r) => r.id)).size)]
     ];
     $('kpis').innerHTML = k.map(([l, v]) => '<div class="kpi"><span>' + l + '</span><b>' + v + '</b></div>').join('');
-    const byLvl = STATUS.map((s) => ({ s, cost: rows.filter((r) => r.lvl === s.id).reduce((a, r) => a + r.cost, 0) })).filter((x) => x.cost > 0);
+    const byLvl = STATUS.map((s) => ({ s, cost: base.filter((r) => r.lvl === s.id).reduce((a, r) => a + r.cost, 0) })).filter((x) => x.cost > 0);
     const tot = byLvl.reduce((a, x) => a + x.cost, 0) || 1;
     $('statusbar').innerHTML = byLvl.map((x) => '<i title="' + esc(x.s.label) + '" style="width:' + (x.cost / tot * 100) + '%;background:' + x.s.color + '"></i>').join('');
     $('statuslegend').innerHTML = byLvl.map((x) => '<span><em style="background:' + x.s.color + '"></em>' + esc(x.s.label) + ' ' + baht(x.cost) + ' (' + (x.cost / tot * 100).toFixed(0) + '%)</span>').join('');
@@ -846,7 +920,7 @@ footer { color: var(--muted); font-size: 12px; }
     const rows = sortRows(filtered(), ...state.sort.items);
     header($('tbl-items'), [{ k: 'name', t: 'สินค้า' }, { k: 'cost', t: 'ค่าโฆษณา', r: 1 }, { k: 'sales', t: 'ยอดขาย Order', r: 1 }, { k: 'roas', t: 'ROAS จริง', r: 1 }, { k: 'need', t: 'ROAS ที่ใช้ตัดสิน', r: 1 }, { k: 'gap', t: 'ส่วนต่าง', r: 1 }, { k: 'shopeeRoas', t: 'ROAS ที่ Shopee รายงาน', r: 1 }, { k: 'lvl', t: 'สถานะ' }], 'items');
     $('tbl-items').tBodies[0].innerHTML = rows.map((r) =>
-      '<tr><td class="nm">' + esc(r.name) + (r.est > 0 ? ' <span class="pill s5">ประมาณ ' + baht(r.est) + '</span>' : '') + (r.blend > 1 ? ' <span class="pill s6">เกณฑ์ผสม ' + r.blend + ' ช่วง</span>' : '') + (r.segLabel ? ' <span class="pill s6">ช่วง ' + esc(r.segLabel) + '</span>' : '') + '<small>' + esc(r.group) + ' · ' + esc(r.adGroup) + ' · ' + esc(r.id) + '</small></td><td class="r">' + baht(r.cost) + '</td><td class="r">' + baht(r.sales) + '</td>' + '<td class="r">' + r1(r.roas) +
+      '<tr><td class="nm">' + esc(r.name) + (r.est > 0 ? ' <span class="pill s5">ประมาณ ' + baht(r.est) + '</span>' : '') + (r.blend > 1 ? ' <span class="pill s6">เกณฑ์ผสม ' + r.blend + ' ช่วง</span>' : '') + (r.isTotal ? ' <span class="pill s0">รวมทั้งเดือน</span>' : r.segLabel ? ' <span class="pill s6">ช่วง ' + esc(r.segLabel) + '</span>' : '') + '<small>' + esc(r.group) + ' · ' + esc(r.adGroup) + ' · ' + esc(r.id) + '</small></td><td class="r">' + baht(r.cost) + '</td><td class="r">' + baht(r.sales) + '</td>' + '<td class="r">' + r1(r.roas) +
       '</td><td class="r">' + r1(r.need) + '</td><td class="r ' + (r.gap == null ? '' : r.gap < 0 ? 'neg' : 'pos') + '">' + (r.gap == null ? '—' : (r.gap > 0 ? '+' : '') + r.gap.toFixed(1)) + '</td><td class="r">' + r1(r.shopeeRoas) + '</td><td>' + pill(r.lvl) + '</td></tr>').join('');
     $('items-count').textContent = 'แสดง ' + fmtInt(rows.length) + ' จาก ' + fmtInt(view.rows.length) + ' สินค้า · ค่าโฆษณาที่แสดง ' + baht(rows.reduce((s, r) => s + r.cost, 0));
   }
@@ -942,15 +1016,22 @@ footer { color: var(--muted); font-size: 12px; }
 
 
     if (ads && ads.segs) msg('info', 'แยกแถวสินค้าตามช่วงเกณฑ์ ' + ads.segs.length + ' ช่วง ใช้ค่าโฆษณารายสินค้าของ Ads แต่ละช่วงเทียบกับเกณฑ์ของช่วงนั้นโดยตรง สินค้าที่เกณฑ์ไม่ต่างกันระหว่างช่วงรวมเป็นแถวเดียว');
-    if (state.segMissing && ads && !ads.segs) msg('warn', 'ไฟล์ Ads ไม่มีช่วงที่ตรงกับเกณฑ์ช่วง ' + state.segMissing.map((s) => s.from + ' ถึง ' + s.to).join(', ') + ' จึงใช้ Ads ช่วงเดียว สินค้าที่ขายคร่อมหลายช่วงเกณฑ์ใช้เกณฑ์ผสม ถ้าต้องการแยกแถว ให้ดึง Ads แยกตามช่วงเกณฑ์ด้วย extension (ช่วงละ 1 ครั้ง)');
+    if (state.segMissing && ads && !ads.segs) msg('warn', 'ไฟล์ Ads ไม่มีช่วงที่ตรงกับเกณฑ์ช่วง ' + state.segMissing.map((s) => s.from + ' ถึง ' + s.to + (s.missingDays && s.missingDays.length ? ' (ขาด Ads รายวัน ' + s.missingDays.slice(0, 5).join(', ') + (s.missingDays.length > 5 ? ' …' : '') + ')' : '')).join(', ') + ' จึงใช้ Ads ช่วงเดียว สินค้าที่ขายคร่อมหลายช่วงเกณฑ์ใช้เกณฑ์ผสม ถ้าต้องการแยกแถว ให้ดึง Ads รายวันให้ครบด้วย extension (โหมดดึงทีละวัน)');
     if (orders && orders.bySkuV && state.versions) {
       const ds = [];
       state.versions.forEach((v, i) => {
         if (!v.refPrices) return;
         for (const [k, s] of Object.entries(orders.bySkuV[i] || {})) if (v.refPrices[k] && s.units >= 3) { const dr = (s.sales / s.units) / v.refPrices[k] - 1; if (Math.abs(dr) > 0.1) ds.push([k, dr, s.sales]); }
       });
+      state.versions.forEach((v, i) => {
+        if (!v.refItems) return;
+        for (const [id, it] of Object.entries(orders.byItem)) {
+          const ref = v.refItems[id], sl = it.vs && it.vs[i], un = it.vu && it.vu[i];
+          if (ref && sl > 0 && un >= 3) { const dr = (sl / un) / ref - 1; if (Math.abs(dr) > 0.1) ds.push([(it.name || id).slice(0, 24), dr, sl]); }
+        }
+      });
       ds.sort((x, y) => y[2] - x[2]);
-      if (ds.length) msg('warn', 'ราคาขายต่อชุดของ ' + ds.length + ' SKU ต่างจากตอนสร้างเกณฑ์ช่วงนั้นเกิน 10% (เช่น ' + ds.slice(0, 4).map((x) => x[0] + ' ' + (x[1] > 0 ? '+' : '') + (x[1] * 100).toFixed(0) + '%').join(', ') + ') เกณฑ์ ROAS อาจไม่ตรงกับราคาปัจจุบัน ให้ผู้จัดการสร้างเกณฑ์ช่วงใหม่');
+      if (ds.length) msg('warn', 'ราคาขายต่อชุดของ ' + ds.length + ' รายการ ต่างจากตอนสร้างเกณฑ์ช่วงนั้นเกิน 10% (เช่น ' + ds.slice(0, 4).map((x) => x[0] + ' ' + (x[1] > 0 ? '+' : '') + (x[1] * 100).toFixed(0) + '%').join(', ') + ') เกณฑ์ ROAS อาจไม่ตรงกับราคาปัจจุบัน ให้ผู้จัดการสร้างเกณฑ์ช่วงใหม่');
       let unc = 0; for (const d of Object.values(orders.dayAgg || {})) unc += d.unc;
       if (orders.total > 0 && unc / orders.total > 0.02) msg('warn', 'ยอดขาย ' + baht(unc) + ' (' + (unc / orders.total * 100).toFixed(0) + '%) ไม่มีเกณฑ์ ROAS ในไฟล์ (วันที่นอกช่วงที่เกณฑ์ครอบคลุม หรือสินค้าที่ไม่มีในไฟล์) ไม่ถูกนำไปคำนวณเกณฑ์');
     }
