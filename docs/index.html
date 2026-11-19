@@ -84,8 +84,8 @@ footer { color: var(--muted); font-size: 12px; }
     <label class="drop" id="drop-ads"><b>2. ไฟล์ Ads (ads_dump_*.json จาก extension) เลือกได้หลายไฟล์</b><span class="st" id="st-ads">ยังไม่ได้เลือก ลากไฟล์มาวางหรือคลิก</span><input type="file" id="f-ads" accept=".json" multiple></label>
     <div class="drop" id="drop-targets" style="cursor:default"><b>3. เป้า ROAS</b><span class="st" id="st-targets">ยังไม่ได้โหลด</span>
       <div class="row">
-        <label class="row" style="cursor:pointer"><span style="text-decoration:underline">อัปโหลดไฟล์เป้า roas-targets-staff.json</span><input type="file" id="f-targets" accept=".json"></label>
-        <button id="btn-clear-targets" class="hidden">ล้างเป้าที่จำไว้</button>
+        <label class="row" style="cursor:pointer"><span style="text-decoration:underline">อัปโหลดไฟล์เป้า roas-targets.json (มีต้นทุน)</span><input type="file" id="f-targets" accept=".json"></label>
+<span class="note">ตรวจช่วงราคารายตะกร้า: ราคาเปลี่ยน ≥</span><input type="number" id="pd-pct" value="5" min="1" max="50" style="width:56px"><span class="note">% และคงอยู่ ≥</span><input type="number" id="pd-days" value="5" min="1" max="30" style="width:56px"><span class="note">วันที่มีออเดอร์</span>        <button id="btn-clear-targets" class="hidden">ล้างเป้าที่จำไว้</button>
       </div>
     </div>
   </section>
@@ -390,7 +390,188 @@ footer { color: var(--muted); font-size: 12px; }
   const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 
+
+  const P = () => state.params || state.defaultParams;
+  function calcTarget(c) {
+    const { fixed, profit, zero_over } = P();
+    const bm = 100 - c - fixed, tm = bm - profit;
+    const be = bm > 0 ? 100 / bm : null, tg = tm > 0 ? 100 / tm : null;
+    const zero = state.zeroOK !== false;
+    const need = c > 100 - fixed ? null : (zero && c > zero_over ? be : tg);
+    return { be, tg, need, loss: c > 100 - fixed, zeroApplies: zero && c > zero_over, mbe: bm, mtg: tm };
+  }
+  // ----- ต้นทุนตามช่วงเวลา (ไฟล์เป้า v3) -----
+  function buildCostIndex() {
+    const idx = {};
+    for (const r of state.costRows || []) (idx[r.sku] || (idx[r.sku] = [])).push(r);
+    for (const rs of Object.values(idx)) rs.sort((a, b) => (a.from || '').localeCompare(b.from || ''));
+    state.unitIndex = idx;
+  }
+  function costAt(sku, day) {
+    const rs = state.unitIndex && state.unitIndex[sku];
+    if (!rs) return null;
+    if (!day) { const open = rs.filter((r) => !r.to); return open.length ? open[open.length - 1].cost : null; }
+    for (const r of rs) if ((!r.from || r.from <= day) && (!r.to || day <= r.to)) return r.cost;
+    return null;
+  }
+  // ต้นทุนของบรรทัดที่ขาย sku (SKU Merchant) จำนวน q ตามวันที่สั่งซื้อ · null = ไม่ทราบ
+  function lineCost(sku, q, day) {
+    if (state.bundles && state.unitIndex) {
+      const b = state.bundles[sku];
+      if (!b) return null;
+      let sum = 0;
+      for (const [c, n] of b.comps) { const cc = costAt(c, day); if (cc == null) return null; sum += cc * n; }
+      return sum * q;
+    }
+    const s = (state.skus || {})[sku];
+    return s ? s.cost * q : null;
+  }
+  const be0 = (v) => (v ? 100 / v : null);
+  const dayAdd = (s, n) => new Date(Date.parse(s) + n * 86400000).toISOString().slice(0, 10);
+  const r2 = (v) => (v == null || !isFinite(v) ? null : Math.round(v * 100) / 100);
+  // ต้นทุน % -> เกณฑ์ ROAS ของตะกร้า: ลำดับต้นทุน %: จริงจากยอดขายและต้นทุนของออเดอร์ > ที่กรอกเอง > ค่าเดิมในไฟล์เป้า
+  function costTarget(o, t) {
+    let cpct = null, src = '';
+    if (o && o.sales > 0 && o.costSales > 0 && o.unknownSales <= 0.2 * o.sales) { cpct = o.cost / o.costSales * 100; src = 'จริง'; }
+    else if (t && t.edited && t.cost_pct != null) { cpct = t.cost_pct; src = 'แก้'; }
+    else if (t && t.cost_pct != null) { cpct = t.cost_pct; src = 'เดิม'; }
+    if (cpct != null) { const x = calcTarget(cpct); return { has: true, cpct, src, be: x.be, tg: x.tg, need: x.need, loss: x.loss, zeroApplies: x.zeroApplies, mbe: x.mbe, mtg: x.mtg }; }
+    if (t) return { has: true, cpct: null, src: 'เดิม', be: t.roas_be == null ? null : t.roas_be, tg: t.roas_target == null ? null : t.roas_target, need: t.roas_need == null ? null : t.roas_need, loss: false, zeroApplies: false, mbe: be0(t.roas_be), mtg: be0(t.roas_target) };
+    return { has: false };
+  }
+
+  // ----- ตรวจช่วงราคารายตะกร้า: ใช้ราคาต่อชิ้น (คอลัมน์ ราคา = ยอด/จำนวน) ของบรรทัดที่ขาย รายวัน -----
+  // ถือว่าราคาเปลี่ยนจริงเมื่อราคาประจำวันต่างจากระดับเดิม ≥ pct และคงอยู่ ≥ R วันที่มีออเดอร์ติดต่อกัน (ราคาในช่วง ±3%) กันโปร/คูปองสั้นๆ
+  function pdParams() { const g = (id, d) => { const el = $(id), v = el ? +el.value : NaN; return v > 0 ? v : d; }; return { pct: g('pd-pct', 5) / 100, R: Math.max(1, Math.round(g('pd-days', 5))) }; }
+  function detectPeriods(raw, includeTransit) {
+    const { pct, R } = pdParams(), tol = 0.03, per = {};
+    for (const l of raw.L) {
+      if (!(l.cls === 'done' || includeTransit) || !(l.rev > 0) || !(l.q > 0) || !l.day) continue;
+      const m = per[l.id] || (per[l.id] = {}), d = m[l.day] || (m[l.day] = { rev: 0, q: 0 });
+      d.rev += l.rev; d.q += l.q;
+    }
+    const out = {};
+    for (const [id, m] of Object.entries(per)) {
+      const ds = Object.keys(m).sort().map((d) => [d, m[d].rev / m[d].q]);
+      let lv = ds[0][1]; const starts = [ds[0][0]];
+      for (let i = 0; i < ds.length;) {
+        const p = ds[i][1];
+        if (Math.abs(p - lv) / lv >= pct) {
+          let j = i; const ps = [];
+          while (j < ds.length && Math.abs(ds[j][1] - p) / p <= tol) { ps.push(ds[j][1]); j++; }
+          if (ps.length >= R) { ps.sort((a, b) => a - b); lv = ps[Math.floor(ps.length / 2)]; starts.push(ds[i][0]); i = j; continue; }
+        }
+        i++;
+      }
+      // ราคาเฉลี่ยของแต่ละช่วงต้องต่างกัน ≥ pct จริง ไม่งั้นรวมกลับ (กันตะกร้าที่ราคาสลับขึ้นลงรายวันแต่ค่าเฉลี่ยเท่าเดิม)
+      const avgOf = (a, b) => { let rev = 0, q = 0; for (const [d] of ds) if (d >= a && (b == null || d < b)) { rev += m[d].rev; q += m[d].q; } return q > 0 ? rev / q : 0; };
+      for (let changed = true; changed && starts.length > 1;) {
+        changed = false;
+        for (let i = 1; i < starts.length; i++) {
+          const a1 = avgOf(starts[i - 1], starts[i]), a2 = avgOf(starts[i], starts[i + 1]);
+          if (a1 > 0 && Math.abs(a2 - a1) / a1 < pct) { starts.splice(i, 1); changed = true; break; }
+        }
+      }
+      out[id] = starts;
+    }
+    return out;
+  }
+  // ยอดขาย/ต้นทุน/จำนวนของแต่ละตะกร้าในแต่ละช่วงราคา รวมต้นทุนของแถมในออเดอร์เดียวกัน
+  function periodAggregates(raw, includeTransit, starts) {
+    const kOf = (id, day) => { const s = starts[id]; let k = 0; if (s && day) for (let i = 0; i < s.length; i++) if (s[i] <= day) k = i; return k; };
+    const agg = {}, sku = {}, byOid = new Map();
+    for (const l of raw.L) {
+      if (!(l.cls === 'done' || includeTransit)) continue;
+      if (!byOid.has(l.oid)) byOid.set(l.oid, []);
+      byOid.get(l.oid).push(l);
+    }
+    for (const ls of byOid.values()) {
+      let free = 0, paid = 0;
+      for (const l of ls) { if (l.rev > 0) paid += l.rev; else { const fc = lineCost(l.sku, l.q, l.day); if (fc != null) free += fc; } }
+      for (const l of ls) {
+        if (!(l.rev > 0)) continue;
+        const a = agg[l.id] || (agg[l.id] = []), k = kOf(l.id, l.day);
+        const it = a[k] || (a[k] = { sales: 0, units: 0, cost: 0, costSales: 0, unknownSales: 0 });
+        it.sales += l.rev; it.units += l.q;
+        const sk = sku[l.id] || (sku[l.id] = {}); sk[l.sku] = (sk[l.sku] || 0) + l.rev;
+        const lc = lineCost(l.sku, l.q, l.day);
+        if (lc != null) { it.cost += lc + (paid > 0 ? free * l.rev / paid : 0); it.costSales += l.rev; } else it.unknownSales += l.rev;
+      }
+    }
+    return { agg, sku };
+  }
+  // แผนช่วงราคาของทุกตะกร้า: [F,T] = ช่วงที่เกณฑ์ชุดนี้ครอบคลุม (ว่าง = ไม่จำกัด) withCost = ใส่ต้นทุน % ต่อชุดในผลลัพธ์ (ใช้แสดงผลเท่านั้น)
+  function planPeriodsCore(F, T, withCost) {
+    const raw = state.ordersRaw, tr = $('chk-transit').checked, starts = detectPeriods(raw, tr), { agg, sku } = periodAggregates(raw, tr, starts);
+    const base = state.costItems || state.targets || {};
+    const ids = new Set(Object.keys(base)); for (const id of Object.keys(agg)) ids.add(id);
+    const groupOfSku = (m) => { let dom = null, dv = -1; for (const [k, v] of Object.entries(m || {})) if (v > dv) { dom = k; dv = v; } const b = (state.skus || {})[dom] || (state.bundles || {})[dom]; return (b && b.group) || null; };
+    const items = [], detail = [];
+    for (const id of ids) {
+      if (id.startsWith('camp:')) continue;
+      const t = base[id], st = starts[id] || [], a = agg[id] || [], n = Math.max(1, st.length), periods = [], rows = [];
+      for (let k = 0; k < n; k++) {
+        const ag = a[k] || { sales: 0, units: 0, cost: 0, costSales: 0, unknownSales: 0 };
+        const ti = costTarget(ag.sales > 0 ? ag : null, t);
+        if (!ti.has || (ti.be == null && ti.tg == null && !ti.loss)) continue;
+        const from = k === 0 ? F : st[k], to = k + 1 < n ? dayAdd(st[k + 1], -1) : T;
+        const p = { from, to, ref_price: ag.units > 0 ? Math.round(ag.sales / ag.units) : null, roas_be: r2(ti.be), roas_target: r2(ti.tg),
+          be_ok: ti.cpct != null && ti.cpct > P().zero_over, loss: !!ti.loss, m_be: r2(Math.max(-100, Math.min(100, ti.mbe))), m_tg: r2(Math.max(-100, Math.min(100, ti.mtg))) };
+        if (withCost) { p.cpct = r2(ti.cpct); p.cost_set = ag.units > 0 && ag.costSales > 0 ? r2(ag.cost / ag.units) : null; }
+        periods.push(p);
+        rows.push({ from, to, price: ag.units > 0 ? ag.sales / ag.units : null, sales: ag.sales, cpct: ti.cpct, tg: ti.tg, be: ti.be });
+      }
+      if (!periods.length) continue;
+      const it = { item_id: id, name: String((t && t.name) || (raw.byItem[id] && raw.byItem[id].name) || '').slice(0, 90), group: (t && t.group) || groupOfSku(sku[id]) || '(ไม่ระบุกลุ่ม)', periods };
+      items.push(it); if (periods.length > 1) detail.push({ it, rows });
+    }
+    return { F, T, items, detail };
+  }
+  // แต่ละสินค้ามีช่วงราคาของตัวเอง -> ตัดช่วงกลางตามวันเริ่ม/สิ้นสุดของทุกช่วง แล้วสร้างเวอร์ชันของแต่ละช่วงกลาง
+  // (สินค้าที่ไม่เปลี่ยนราคาจะได้เกณฑ์เดียวกันทุกเวอร์ชัน แล้วถูกรวมเป็นแถวเดียวตอนแสดงผล)
+  function versionsFromPeriods(items) {
+    const cuts = new Set(); let openStart = false;
+    for (const it of items) for (const p of it.periods) { if (p.from) cuts.add(p.from); else openStart = true; if (p.to) cuts.add(dayAdd(p.to, 1)); }
+    const starts = (openStart ? [null] : []).concat([...cuts].sort());
+    if (!starts.length) starts.push(null);
+    return starts.map((f, i) => {
+      const to = i + 1 < starts.length ? dayAdd(starts[i + 1], -1) : null, at = f || '0000-00-00', m = [], ref = {};
+      for (const it of items) {
+        const p = it.periods.find((q) => (!q.from || q.from <= at) && (!q.to || q.to >= at));
+        if (!p) continue;
+        m.push({ item_id: it.item_id, name: it.name, group: it.group, roas_be: p.roas_be, roas_target: p.roas_target, be_ok: p.be_ok, loss: p.loss, m_be: p.m_be, m_tg: p.m_tg, cpct: p.cpct == null ? null : p.cpct, cost_set: p.cost_set == null ? null : p.cost_set, ref_price: p.ref_price || null });
+        if (p.ref_price) ref[String(it.item_id)] = p.ref_price;
+      }
+      return { from: f, to, period: null, ref_prices: null, ref_items: ref, items: m };
+    });
+  }
+  function normVersions(vers) {
+    const out = vers.map((v) => {
+      if (!v || !Array.isArray(v.items)) throw new Error('ไฟล์เป้าไม่ถูกต้อง (เวอร์ชันไม่มีรายการสินค้า)');
+      const m = {}; for (const r of v.items) m[String(r.item_id)] = r;
+      return { from: v.from || null, to: v.to || null, period: v.period || null, refPrices: v.ref_prices || null, refItems: v.ref_items || null, items: m };
+    }).sort((a, b) => (a.from || '').localeCompare(b.from || ''));
+    for (let i = 0; i < out.length; i++) {
+      const v = out[i];
+      if (v.from && v.to && v.from > v.to) throw new Error('ไฟล์เป้ามีช่วงวันที่ผิด (เริ่มหลังสิ้นสุด)');
+      if (i > 0 && (out[i - 1].to || '9999-12-31') >= (v.from || '0000-00-00')) throw new Error('ไฟล์เป้ามีช่วงวันที่ซ้อนกัน');
+    }
+    return out;
+  }
+  // ไฟล์เป้าที่มีต้นทุน (roas-targets.json): ระบบหาช่วงราคาของแต่ละตะกร้าจากออเดอร์เอง แล้วคำนวณเกณฑ์ ROAS ของแต่ละช่วงจากต้นทุนในไฟล์
+  function deriveVersions() {
+    if (!state.costMode || !state.ordersRaw) return;
+    const plan = planPeriodsCore(null, null, true);
+    state.versions = normVersions(versionsFromPeriods(plan.items));
+    state.pricePlan = plan;
+    const map = {};
+    for (const v of state.versions) for (const [id, e] of Object.entries(v.items)) map[id] = e;
+    state.targets = map;
+  }
+
+
   const state = { orders: null, adsRaw: null, ads: null, targets: null, sort: { items: ['cost', -1], groups: ['cost', -1] }, estimateMissing: false, zeroOK: true };
+
 
   // ---------- สถานะ ----------
   const STATUS = [
@@ -484,6 +665,7 @@ footer { color: var(--muted); font-size: 12px; }
 
   function applyOrderOption() {
     if (!state.ordersRaw) return;
+    deriveVersions();
     state.orders = effectiveOrders(state.ordersRaw, $('chk-transit').checked);
     const r = state.ordersRaw;
     const parts = Object.entries(r.byStatus).sort((a, b) => b[1].sales - a[1].sales).map(([k, v]) => k + ' ' + fmtInt(v.n) + ' แถว ' + baht(v.sales) + ((v.cls === 'done' || $('chk-transit').checked) ? '' : ' (ไม่นับ)'));
@@ -599,42 +781,25 @@ footer { color: var(--muted); font-size: 12px; }
 
 
 
-  // ไฟล์รุ่น 6: แต่ละสินค้ามีช่วงราคาของตัวเอง -> ตัดช่วงกลางตามวันเริ่ม/สิ้นสุดของทุกช่วงในไฟล์ แล้วสร้างเวอร์ชันของแต่ละช่วงกลาง
-  // (สินค้าที่ไม่เปลี่ยนราคาจะได้เกณฑ์เดียวกันทุกเวอร์ชัน แล้วถูกรวมเป็นแถวเดียวตอนแสดงผล)
-  function versionsFromPeriods(items) {
-    const sh = (d, n) => new Date(Date.parse(d) + n * 86400000).toISOString().slice(0, 10);
-    const cuts = new Set(); let openStart = false;
-    for (const it of items) for (const p of it.periods) { if (p.from) cuts.add(p.from); else openStart = true; if (p.to) cuts.add(sh(p.to, 1)); }
-    const starts = (openStart ? [null] : []).concat([...cuts].sort());
-    if (!starts.length) starts.push(null);
-    return starts.map((f, i) => {
-      const to = i + 1 < starts.length ? sh(starts[i + 1], -1) : null, at = f || '0000-00-00', m = [], ref = {};
-      for (const it of items) {
-        const p = it.periods.find((q) => (!q.from || q.from <= at) && (!q.to || q.to >= at));
-        if (!p) continue;
-        m.push({ item_id: it.item_id, name: it.name, group: it.group, roas_be: p.roas_be, roas_target: p.roas_target, be_ok: p.be_ok, loss: p.loss, m_be: p.m_be, m_tg: p.m_tg });
-        if (p.ref_price) ref[String(it.item_id)] = p.ref_price;
-      }
-      return { from: f, to, period: null, ref_prices: null, ref_items: ref, items: m };
-    });
-  }
   function parseTargets(obj) {
-    if (!obj || obj.kind !== 'staff') throw new Error('ไม่ใช่ไฟล์เป้าสำหรับพนักงาน (roas-targets-staff.json) ขอไฟล์ที่ถูกต้องจากผู้จัดการ');
+    if (obj && obj.kind !== 'staff' && Array.isArray(obj.unit_costs) && obj.bundles && obj.params && Array.isArray(obj.items)) {
+      // ไฟล์เป้าที่มีต้นทุน (roas-targets.json): ระบบหาช่วงราคาและคำนวณเกณฑ์ของแต่ละช่วงเองหลังโหลดไฟล์ Order
+      state.costMode = true; state.params = obj.params; state.bundles = obj.bundles; state.skus = obj.skus || {};
+      state.costRows = obj.unit_costs.map((r) => ({ sku: String(r.sku), cost: Number(r.cost), from: r.from || null, to: r.to || null }));
+      buildCostIndex(); state.versions = null; state.pricePlan = null;
+      state.targetsInfo = (obj.generated ? 'สร้างไฟล์เมื่อ ' + obj.generated : '') + ' · ต้นทุน ' + new Set(state.costRows.map((r) => r.sku)).size + ' SKU';
+      const cm = {}; for (const r of obj.items) cm[String(r.item_id)] = r;
+      state.costItems = cm;
+      return cm;
+    }
+    state.costMode = false; state.costItems = null;
+    if (!obj || obj.kind !== 'staff') throw new Error('ไฟล์เป้าไม่ถูกต้อง ใช้ไฟล์ roas-targets.json (มีต้นทุน) จากผู้จัดการ');
     let vers;
     if (Array.isArray(obj.versions)) vers = obj.versions;
     else if (Array.isArray(obj.items) && obj.items.length && Array.isArray(obj.items[0].periods)) vers = versionsFromPeriods(obj.items);
     else if (Array.isArray(obj.items)) vers = [{ from: null, to: null, period: obj.period || null, ref_prices: obj.ref_prices || null, items: obj.items }];
     else throw new Error('ไฟล์เป้าไม่ถูกต้อง');
-    const out = vers.map((v) => {
-      if (!v || !Array.isArray(v.items)) throw new Error('ไฟล์เป้าไม่ถูกต้อง (เวอร์ชันไม่มีรายการสินค้า)');
-      const m = {}; for (const r of v.items) m[String(r.item_id)] = r;
-      return { from: v.from || null, to: v.to || null, period: v.period || null, refPrices: v.ref_prices || null, refItems: v.ref_items || null, items: m };
-    }).sort((a, b) => (a.from || '').localeCompare(b.from || ''));
-    for (let i = 0; i < out.length; i++) {
-      const v = out[i];
-      if (v.from && v.to && v.from > v.to) throw new Error('ไฟล์เป้ามีช่วงวันที่ผิด (เริ่มหลังสิ้นสุด)');
-      if (i > 0 && (out[i - 1].to || '9999-12-31') >= (v.from || '0000-00-00')) throw new Error('ไฟล์เป้ามีช่วงวันที่ซ้อนกัน');
-    }
+    const out = normVersions(vers);
     state.versions = out;
     state.targetsInfo = (obj.generated ? 'สร้างไฟล์เมื่อ ' + obj.generated : '') + ' · เกณฑ์ ' + out.length + ' ช่วง' + (out.length === 1 && out[0].period ? ' (สร้างจากข้อมูล ' + out[0].period.from + ' ถึง ' + out[0].period.to + ')' : '');
     const map = {};
@@ -685,7 +850,7 @@ footer { color: var(--muted); font-size: 12px; }
   function entryInfo(e) {
     const be = e.roas_be == null ? null : e.roas_be, tg = e.roas_target == null ? null : e.roas_target;
     const zeroApplies = state.zeroOK !== false && !!e.be_ok;
-    return { has: true, be, tg, need: zeroApplies ? be : tg, loss: !!e.loss, zeroApplies, mbe: e.m_be == null ? null : e.m_be, mtg: e.m_tg == null ? null : e.m_tg, blend: 1 };
+    return { has: true, be, tg, need: zeroApplies ? be : tg, loss: !!e.loss, zeroApplies, mbe: e.m_be == null ? null : e.m_be, mtg: e.m_tg == null ? null : e.m_tg, blend: 1, cpct: e.cpct == null ? null : e.cpct, ucost: e.cost_set == null ? null : e.cost_set, price: e.ref_price == null ? null : e.ref_price };
   }
   function targetInfo(o, t, id) {
     if (!t) return { has: false };
@@ -693,11 +858,11 @@ footer { color: var(--muted); font-size: 12px; }
     const parts = [];
     if (o && o.vs) for (const [k, s] of Object.entries(o.vs)) { if (k === 'x' || !(s > 0)) continue; const e = vs[+k] && vs[+k].items[id]; if (e) parts.push({ s, e }); }
     if (parts.length <= 1) return entryInfo(parts.length ? parts[0].e : t);
-    let sw = 0, aBe = 0, aTg = 0, zs = 0, allLoss = true;
-    for (const { s, e } of parts) { if (e.m_be == null || e.m_tg == null) continue; sw += s; aBe += s * e.m_be; aTg += s * e.m_tg; if (e.be_ok) zs += s; if (!e.loss) allLoss = false; }
+    let sw = 0, aBe = 0, aTg = 0, zs = 0, allLoss = true, cs = 0, cw = 0;
+    for (const { s, e } of parts) { if (e.m_be == null || e.m_tg == null) continue; sw += s; aBe += s * e.m_be; aTg += s * e.m_tg; if (e.be_ok) zs += s; if (!e.loss) allLoss = false; if (e.cpct != null) { cs += s * e.cpct; cw += s; } }
     if (!(sw > 0)) return { has: true, be: null, tg: null, need: null, loss: false, zeroApplies: false, mbe: null, mtg: null, blend: parts.length };
     const be = aBe > 0 ? 100 * sw / aBe : null, tg = aTg > 0 ? 100 * sw / aTg : null, zeroApplies = state.zeroOK !== false && zs / sw > 0.5;
-    return { has: true, be, tg, need: zeroApplies ? be : tg, loss: allLoss, zeroApplies, mbe: aBe / sw, mtg: aTg / sw, blend: parts.length };
+    return { has: true, be, tg, need: zeroApplies ? be : tg, loss: allLoss, zeroApplies, mbe: aBe / sw, mtg: aTg / sw, blend: parts.length, cpct: cw > 0 ? cs / cw : null, ucost: null, price: null };
   }
 
   // ---------- โหมดแยกช่วง: ใช้ค่าโฆษณารายสินค้าของ Ads แต่ละช่วงให้ตรงกับช่วงเกณฑ์ ----------
@@ -710,6 +875,7 @@ footer { color: var(--muted); font-size: 12px; }
       if (f > t) return;
       let best = null;
       for (const p of raw.periods) {
+        if (p.from === p.to && f !== t) continue;   // ช่วงยาว 1 วันไม่ใช่ตัวแทนของช่วงที่ยาวกว่า (ประกอบจากรายวันแทน)
         const df = Math.abs(dayNum(p.from) - dayNum(f)), dt = Math.abs(dayNum(p.to) - dayNum(t));
         if (df <= 1 && dt <= 1 && (!best || df + dt < best.d)) best = { p, d: df + dt };
       }
@@ -753,7 +919,7 @@ footer { color: var(--muted); font-size: 12px; }
           id: a.id, name: (e && e.name) || (state.targets[a.id] && state.targets[a.id].name) || a.name || (it && it.name) || '(ไม่พบชื่อ)', adGroup: [...a.groups].join(' | '),
           group: a.pseudo ? '(กลุ่มโฆษณาที่ไม่มีรายสินค้า)' : (ti.has ? ((e && e.group) || '(ไม่ระบุกลุ่ม)') : '(ไม่มีเกณฑ์ในชีตเป้า)'), est: a.est || 0, cost: a.cost, gmv: a.gmv, sales,
           roas, shopeeRoas: a.cost > 0 ? a.gmv / a.cost : null, need: ti.need, be: ti.be, tg: ti.tg, mbe: ti.mbe, mtg: ti.mtg, zeroApplies: ti.zeroApplies, blend: 1,
-          gap: ti.need != null && roas != null ? roas - ti.need : null, lvl: !ti.has ? 5 : classify(roas, sales, ti, ti.zeroApplies), segLabel: verLabel(sg.vi), ti
+          gap: ti.need != null && roas != null ? roas - ti.need : null, lvl: !ti.has ? 5 : classify(roas, sales, ti, ti.zeroApplies), segLabel: verLabel(sg.vi), cpct: ti.cpct, ucost: ti.ucost, price: ti.price, ti
         };
         if (!per.has(a.id)) per.set(a.id, []);
         per.get(a.id).push(row);
@@ -773,6 +939,7 @@ footer { color: var(--muted); font-size: 12px; }
           t.zeroApplies = state.zeroOK !== false && sw > 0 && zs / sw > 0.5; t.need = t.zeroApplies ? t.be : t.tg;
           t.gap = t.need != null && t.roas != null ? t.roas - t.need : null;
           t.lvl = classify(t.roas, t.sales, { be: t.be, tg: t.tg, need: t.need, loss: allLoss }, t.zeroApplies);
+          { let cs = 0, cw = 0; for (const r of list) if (r.cpct != null && r.sales > 0) { cs += r.cpct * r.sales; cw += r.sales; } t.cpct = cw > 0 ? cs / cw : null; t.ucost = null; t.price = null; }
           t.isTotal = true; t.segLabel = 'รวมทั้งเดือน'; t.blend = 1;
           out.push(t);
         }
@@ -803,6 +970,7 @@ footer { color: var(--muted); font-size: 12px; }
       return {
         id: a.id, name: (t && t.name) || a.name || (o && o.name) || '(ไม่พบชื่อ)', adGroup: [...a.groups].join(' | '),
         group: a.pseudo ? '(กลุ่มโฆษณาที่ไม่มีรายสินค้า)' : (ti.has ? groupOf(o, t) : '(ไม่มีเกณฑ์ในชีตเป้า)'), est: a.est || 0, cost: a.cost, gmv: a.gmv, segLabel: '', sales, roas, shopeeRoas: a.cost > 0 ? a.gmv / a.cost : null,
+        cpct: ti.cpct, ucost: ti.ucost, price: ti.price,
 
         need: ti.need, be: ti.be, tg: ti.tg, mbe: ti.mbe, mtg: ti.mtg, zeroApplies: ti.zeroApplies, blend: ti.blend || 1, gap: ti.need != null && roas != null ? roas - ti.need : null, lvl
       };
@@ -918,9 +1086,9 @@ footer { color: var(--muted); font-size: 12px; }
   function renderItems() {
     if (!view) return;
     const rows = sortRows(filtered(), ...state.sort.items);
-    header($('tbl-items'), [{ k: 'name', t: 'สินค้า' }, { k: 'cost', t: 'ค่าโฆษณา', r: 1 }, { k: 'sales', t: 'ยอดขาย Order', r: 1 }, { k: 'roas', t: 'ROAS จริง', r: 1 }, { k: 'need', t: 'ROAS ที่ใช้ตัดสิน', r: 1 }, { k: 'gap', t: 'ส่วนต่าง', r: 1 }, { k: 'shopeeRoas', t: 'ROAS ที่ Shopee รายงาน', r: 1 }, { k: 'lvl', t: 'สถานะ' }], 'items');
+    header($('tbl-items'), [{ k: 'name', t: 'สินค้า' }, { k: 'cost', t: 'ค่าโฆษณา', r: 1 }, { k: 'sales', t: 'ยอดขาย Order', r: 1 }, { k: 'cpct', t: 'ต้นทุน %', r: 1 }, { k: 'roas', t: 'ROAS จริง', r: 1 }, { k: 'need', t: 'ROAS ที่ใช้ตัดสิน', r: 1 }, { k: 'gap', t: 'ส่วนต่าง', r: 1 }, { k: 'shopeeRoas', t: 'ROAS ที่ Shopee รายงาน', r: 1 }, { k: 'lvl', t: 'สถานะ' }], 'items');
     $('tbl-items').tBodies[0].innerHTML = rows.map((r) =>
-      '<tr><td class="nm">' + esc(r.name) + (r.est > 0 ? ' <span class="pill s5">ประมาณ ' + baht(r.est) + '</span>' : '') + (r.blend > 1 ? ' <span class="pill s6">เกณฑ์ผสม ' + r.blend + ' ช่วง</span>' : '') + (r.isTotal ? ' <span class="pill s0">รวมทั้งเดือน</span>' : r.segLabel ? ' <span class="pill s6">ช่วง ' + esc(r.segLabel) + '</span>' : '') + '<small>' + esc(r.group) + ' · ' + esc(r.adGroup) + ' · ' + esc(r.id) + '</small></td><td class="r">' + baht(r.cost) + '</td><td class="r">' + baht(r.sales) + '</td>' + '<td class="r">' + r1(r.roas) +
+      '<tr><td class="nm">' + esc(r.name) + (r.est > 0 ? ' <span class="pill s5">ประมาณ ' + baht(r.est) + '</span>' : '') + (r.blend > 1 ? ' <span class="pill s6">เกณฑ์ผสม ' + r.blend + ' ช่วง</span>' : '') + (r.isTotal ? ' <span class="pill s0">รวมทั้งเดือน</span>' : r.segLabel ? ' <span class="pill s6">ช่วง ' + esc(r.segLabel) + '</span>' : '') + '<small>' + esc(r.group) + ' · ' + esc(r.adGroup) + ' · ' + esc(r.id) + (r.ucost != null ? ' · ต้นทุน ฿' + fmtInt(r.ucost) + '/ชุด' : '') + (r.price != null ? ' · ราคา ฿' + fmtInt(r.price) : '') + '</small></td><td class="r">' + baht(r.cost) + '</td><td class="r">' + baht(r.sales) + '</td>' + '<td class="r">' + (r.cpct == null ? '—' : r1(r.cpct) + '%' + (r.src ? ' <small style="display:inline">' + r.src + '</small>' : '')) + '</td>' + '<td class="r">' + r1(r.roas) +
       '</td><td class="r">' + r1(r.need) + '</td><td class="r ' + (r.gap == null ? '' : r.gap < 0 ? 'neg' : 'pos') + '">' + (r.gap == null ? '—' : (r.gap > 0 ? '+' : '') + r.gap.toFixed(1)) + '</td><td class="r">' + r1(r.shopeeRoas) + '</td><td>' + pill(r.lvl) + '</td></tr>').join('');
     $('items-count').textContent = 'แสดง ' + fmtInt(rows.length) + ' จาก ' + fmtInt(view.rows.length) + ' สินค้า · ค่าโฆษณาที่แสดง ' + baht(rows.reduce((s, r) => s + r.cost, 0));
   }
@@ -993,9 +1161,9 @@ footer { color: var(--muted); font-size: 12px; }
 
   function csv() {
     const rows = sortRows(filtered(), ...state.sort.items);
-    const head = ['item_id', 'ชื่อสินค้า', 'กลุ่มสินค้า', 'กลุ่มโฆษณา', 'ค่าโฆษณา', 'ยอดขาย Order', 'ROAS จริง', 'ROAS ที่ต้องได้', 'ส่วนต่าง', 'ROAS ที่ Shopee รายงาน', 'ช่วงเกณฑ์', 'สถานะ'];
+    const head = ['item_id', 'ชื่อสินค้า', 'กลุ่มสินค้า', 'กลุ่มโฆษณา', 'ค่าโฆษณา', 'ยอดขาย Order', 'ต้นทุน %', 'ที่มาของต้นทุน %', 'ROAS จริง', 'ROAS ที่ต้องได้', 'ส่วนต่าง', 'ROAS ที่ Shopee รายงาน', 'ช่วงเกณฑ์', 'สถานะ'];
     const e = (v) => { v = v == null ? '' : String(v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
-    const body = rows.map((r) => [r.id, r.name, r.group, r.adGroup, r.cost.toFixed(2), r.sales.toFixed(2), r.roas == null ? '' : r.roas.toFixed(2), r.need == null ? '' : r.need, r.gap == null ? '' : r.gap.toFixed(2), r.shopeeRoas == null ? '' : r.shopeeRoas.toFixed(2), r.segLabel || '', sLabel(r.lvl)].map(e).join(','));
+    const body = rows.map((r) => [r.id, r.name, r.group, r.adGroup, r.cost.toFixed(2), r.sales.toFixed(2), r.cpct == null ? '' : r.cpct.toFixed(1), r.src || '', r.roas == null ? '' : r.roas.toFixed(2), r.need == null ? '' : r.need, r.gap == null ? '' : r.gap.toFixed(2), r.shopeeRoas == null ? '' : r.shopeeRoas.toFixed(2), r.segLabel || '', sLabel(r.lvl)].map(e).join(','));
     const url = URL.createObjectURL(new Blob(['﻿' + [head.join(',')].concat(body).join('\r\n')], { type: 'text/csv;charset=utf-8' }));
     const a = document.createElement('a'); a.href = url; a.download = 'roas_check.csv'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 4000);
   }
@@ -1077,6 +1245,7 @@ footer { color: var(--muted); font-size: 12px; }
     } catch (e) { fail('st-targets', e); }
   };
   ['q', 'fgroup', 'fstatus'].forEach((id) => { $(id).oninput = renderItems; $(id).onchange = renderItems; });
+  ['pd-pct', 'pd-days'].forEach((id) => { if ($(id)) $(id).onchange = () => { if (state.costMode) refresh(); }; });
   try { const sv = localStorage.getItem('roas-include-transit'); if (sv !== null) $('chk-transit').checked = sv === '1'; } catch (e) {}
   $('chk-transit').onchange = () => { try { localStorage.setItem('roas-include-transit', $('chk-transit').checked ? '1' : '0'); } catch (e) {} applyOrderOption(); render(); checks(); };
   $('fperiod').onchange = () => { state.periodKey = $('fperiod').value; state.periodKeyPinned = true; applyPeriod(); refresh(); };
